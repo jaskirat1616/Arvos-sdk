@@ -156,27 +156,40 @@ class DepthFrame:
         """Parse PLY data to point cloud array (N x 3 or N x 6)"""
         try:
             import io
-            lines = self.data.decode('utf-8').split('\n')
 
-            # Find end_header
-            header_end = 0
-            for i, line in enumerate(lines):
-                if line.strip() == 'end_header':
-                    header_end = i + 1
+            # Find end_header by scanning bytes (not decoding entire file)
+            header_end_bytes = 0
+            search_pos = 0
+            max_header_size = 1024  # PLY headers are typically small
+
+            while search_pos < min(len(self.data), max_header_size):
+                # Look for "end_header\n" in bytes
+                if self.data[search_pos:search_pos+11] == b'end_header\n':
+                    header_end_bytes = search_pos + 11
                     break
+                elif self.data[search_pos:search_pos+12] == b'end_header\r\n':
+                    header_end_bytes = search_pos + 12
+                    break
+                search_pos += 1
+
+            if header_end_bytes == 0:
+                print("Could not find 'end_header' in PLY data")
+                return None
 
             # Binary data starts after header
-            header_bytes = len('\n'.join(lines[:header_end]).encode('utf-8')) + 1
-            binary_data = self.data[header_bytes:]
+            binary_data = self.data[header_end_bytes:]
 
             # Parse binary PLY (assuming float xyz + uchar rgb)
-            # This is simplified - production code should parse header properly
+            # Format: little-endian float32 x, y, z + uint8 r, g, b
             dtype = np.dtype([
                 ('x', '<f4'), ('y', '<f4'), ('z', '<f4'),
                 ('r', 'u1'), ('g', 'u1'), ('b', 'u1')
             ])
 
             points = np.frombuffer(binary_data, dtype=dtype)
+
+            if len(points) == 0:
+                return None
 
             # Return as (N, 6) array [x, y, z, r, g, b]
             xyz = np.stack([points['x'], points['y'], points['z']], axis=1)
@@ -186,6 +199,8 @@ class DepthFrame:
 
         except Exception as e:
             print(f"Failed to parse PLY: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
 

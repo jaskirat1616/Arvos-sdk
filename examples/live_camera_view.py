@@ -55,8 +55,6 @@ class LiveCameraView:
                 self.frame_count = 0
                 self.last_time = now
 
-            print(f"📷 Camera frame updated: {frame.width}x{frame.height}, FPS: {self.fps:.1f}")
-
         except Exception as e:
             print(f"❌ Failed to decode frame: {e}")
 
@@ -72,17 +70,18 @@ class LiveCameraView:
         """Update depth/LiDAR data"""
         self.latest_depth = frame
         self.depth_count += 1
-        print(f"🔵 Depth frame updated: {frame.point_count} points, range: {frame.min_depth:.2f}-{frame.max_depth:.2f}m")
+        if self.depth_count <= 3 or self.depth_count % 10 == 0:
+            print(f"🔵 Depth frame #{self.depth_count}: {frame.point_count} points, range: {frame.min_depth:.2f}-{frame.max_depth:.2f}m")
 
     def update_gps(self, data: GPSData):
         """Update GPS data"""
         self.latest_gps = data
-        print(f"🌍 GPS updated: {data.latitude:.6f}, {data.longitude:.6f}, accuracy: ±{data.horizontal_accuracy:.1f}m")
+        # GPS updates slowly, print all of them
+        print(f"🌍 GPS: ({data.latitude:.6f}, {data.longitude:.6f}), ±{data.horizontal_accuracy:.1f}m")
 
     def draw_depth_visualization(self, frame):
         """Draw depth point cloud as colored overlay"""
         if self.latest_depth is None:
-            print("⚠️  No depth data available for visualization")
             return frame
 
         height, width = frame.shape[:2]
@@ -91,9 +90,7 @@ class LiveCameraView:
         try:
             points = self.latest_depth.to_point_cloud()
             if points is None or len(points) == 0:
-                print("⚠️  Depth point cloud is empty")
                 return frame
-            print(f"✅ Drawing depth visualization with {len(points)} points")
         except Exception as e:
             print(f"❌ Error parsing point cloud: {e}")
             return frame
@@ -167,10 +164,7 @@ class LiveCameraView:
     def draw_gps_visualization(self, frame):
         """Draw GPS location as mini-map"""
         if self.latest_gps is None:
-            print("⚠️  No GPS data available for visualization")
             return frame
-
-        print(f"✅ Drawing GPS visualization")
 
         height, width = frame.shape[:2]
 
@@ -315,12 +309,9 @@ class LiveCameraView:
     def show(self):
         """Display the frame with overlay"""
         if self.latest_frame is not None:
-            print(f"🖼️  Showing frame {self.frame_count}")
             display_frame = self.draw_overlay(self.latest_frame)
             if display_frame is not None:
                 cv2.imshow('Arvos Live Camera', display_frame)
-            else:
-                print("❌ draw_overlay returned None!")
         else:
             # Show placeholder if no frame yet
             placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
