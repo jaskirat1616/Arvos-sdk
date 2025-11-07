@@ -104,7 +104,8 @@ class ArvosClient:
         """Handle JSON message (IMU, GPS, pose, control)"""
         try:
             data = json.loads(message)
-            msg_type = data.get("type")
+            # Try "type" field first (for control messages), then "sensorType" (for sensor data)
+            msg_type = data.get("type") or data.get("sensorType")
 
             if msg_type == "handshake":
                 await self._handle_handshake(data)
