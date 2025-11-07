@@ -32,6 +32,7 @@ class LiveCameraView:
         self.latest_depth = None
         self.latest_gps = None
         self.frame_count = 0
+        self.total_frames = 0  # Total frames received (never reset)
         self.depth_count = 0
         self.fps = 0
         self.last_time = datetime.now()
@@ -57,6 +58,7 @@ class LiveCameraView:
 
             self.latest_frame = img_bgr
             self.frame_count += 1
+            self.total_frames += 1
 
             # Calculate FPS
             now = datetime.now()
@@ -65,6 +67,10 @@ class LiveCameraView:
                 self.fps = self.frame_count / elapsed
                 self.frame_count = 0
                 self.last_time = now
+
+            # Print first few frames and periodic updates
+            if self.total_frames <= 5 or self.total_frames % 30 == 0:
+                print(f"📷 Camera frame #{self.total_frames}: {frame.width}x{frame.height}, FPS: {self.fps:.1f}")
 
         except Exception as e:
             print(f"❌ Failed to decode frame: {e}")
@@ -172,9 +178,18 @@ class LiveCameraView:
 
     def _depth_to_color(self, depths):
         """Convert depth values to colors (blue = close, red = far)"""
+        if len(depths) == 0:
+            return np.zeros((0, 3), dtype=np.uint8)
+
         # Normalize depths to 0-1
-        min_d, max_d = -1.0, 1.0
+        min_d = np.nanmin(depths) if not np.all(np.isnan(depths)) else -1.0
+        max_d = np.nanmax(depths) if not np.all(np.isnan(depths)) else 1.0
+
+        if max_d == min_d:
+            max_d = min_d + 1.0
+
         normalized = np.clip((depths - min_d) / (max_d - min_d), 0, 1)
+        normalized = np.nan_to_num(normalized, 0.5)  # Replace NaN with 0.5
 
         # Create color map (BGR)
         colors = np.zeros((len(depths), 3), dtype=np.uint8)
