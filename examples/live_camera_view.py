@@ -3,10 +3,10 @@
 Live camera view with sensor overlay
 
 Displays camera frames in real-time with sensor data overlay.
-Includes visual representations of depth/LiDAR and GPS data.
+Includes visual representations of depth/LiDAR and GPS data in separate windows.
 
 Requirements:
-    pip install opencv-python Pillow numpy
+    pip install opencv-python Pillow numpy requests
 
 Usage:
     python live_camera_view.py
@@ -20,6 +20,8 @@ from PIL import Image
 import io
 from datetime import datetime
 import math
+import requests
+from io import BytesIO
 
 
 class LiveCameraView:
@@ -33,6 +35,15 @@ class LiveCameraView:
         self.depth_count = 0
         self.fps = 0
         self.last_time = datetime.now()
+
+        # GPS map cache
+        self.gps_map_cache = None
+        self.last_gps_update = None
+
+        # Window names
+        self.camera_window = 'Arvos - Camera Feed'
+        self.depth_window = 'Arvos - Depth/LiDAR'
+        self.gps_window = 'Arvos - GPS Map'
 
     def update_camera(self, frame: CameraFrame):
         """Update camera frame"""
@@ -79,25 +90,28 @@ class LiveCameraView:
         # GPS updates slowly, print all of them
         print(f"🌍 GPS: ({data.latitude:.6f}, {data.longitude:.6f}), ±{data.horizontal_accuracy:.1f}m")
 
-    def draw_depth_visualization(self, frame):
-        """Draw depth point cloud as colored overlay"""
+    def show_depth_window(self):
+        """Display depth/LiDAR visualization in separate window"""
         if self.latest_depth is None:
-            return frame
-
-        height, width = frame.shape[:2]
+            # Show placeholder
+            placeholder = np.zeros((600, 800, 3), dtype=np.uint8)
+            cv2.putText(placeholder, "Waiting for depth data...", (250, 300),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.imshow(self.depth_window, placeholder)
+            return
 
         # Parse point cloud
         try:
             points = self.latest_depth.to_point_cloud()
             if points is None or len(points) == 0:
-                return frame
+                return
         except Exception as e:
             print(f"❌ Error parsing point cloud: {e}")
-            return frame
+            return
 
-        # Create depth overlay (top-right corner, 200x200)
-        viz_size = 200
-        depth_viz = np.zeros((viz_size, viz_size, 3), dtype=np.uint8)
+        # Create larger depth visualization (800x600)
+        viz_width, viz_height = 800, 600
+        depth_viz = np.zeros((viz_height, viz_width, 3), dtype=np.uint8)
 
         # Extract XZ coordinates (top-down view)
         xyz = points[:, :3]
@@ -105,47 +119,56 @@ class LiveCameraView:
         # Normalize to visualization size
         if len(xyz) > 0:
             # Use only points within reasonable range
-            mask = (np.abs(xyz[:, 0]) < 3) & (np.abs(xyz[:, 2]) < 3)
+            max_range = 5.0  # 5 meters
+            mask = (np.abs(xyz[:, 0]) < max_range) & (np.abs(xyz[:, 2]) < max_range)
             xyz_filtered = xyz[mask]
 
             if len(xyz_filtered) > 0:
                 # Map to image coordinates
-                scale = viz_size / 6.0  # 6 meters total (-3 to +3)
-                x_img = ((xyz_filtered[:, 0] + 3) * scale).astype(int)
-                z_img = ((xyz_filtered[:, 2] + 3) * scale).astype(int)
+                scale_x = viz_width / (2 * max_range)
+                scale_z = viz_height / (2 * max_range)
+                x_img = ((xyz_filtered[:, 0] + max_range) * scale_x).astype(int)
+                z_img = ((xyz_filtered[:, 2] + max_range) * scale_z).astype(int)
 
                 # Clip to image bounds
-                x_img = np.clip(x_img, 0, viz_size - 1)
-                z_img = np.clip(z_img, 0, viz_size - 1)
+                x_img = np.clip(x_img, 0, viz_width - 1)
+                z_img = np.clip(z_img, 0, viz_height - 1)
 
                 # Color based on depth (Y axis)
                 depths = xyz_filtered[:, 1]
                 colors = self._depth_to_color(depths)
 
-                # Draw points
+                # Draw points (larger size for visibility)
                 for i in range(len(x_img)):
-                    cv2.circle(depth_viz, (x_img[i], z_img[i]), 1, colors[i].tolist(), -1)
+                    cv2.circle(depth_viz, (x_img[i], z_img[i]), 2, colors[i].tolist(), -1)
 
-        # Add center marker
-        cv2.circle(depth_viz, (viz_size // 2, viz_size // 2), 3, (255, 255, 255), 1)
-        cv2.line(depth_viz, (viz_size // 2 - 5, viz_size // 2),
-                 (viz_size // 2 + 5, viz_size // 2), (255, 255, 255), 1)
-        cv2.line(depth_viz, (viz_size // 2, viz_size // 2 - 5),
-                 (viz_size // 2, viz_size // 2 + 5), (255, 255, 255), 1)
+        # Add grid lines
+        for i in range(0, viz_width, viz_width // 10):
+            cv2.line(depth_viz, (i, 0), (i, viz_height), (50, 50, 50), 1)
+        for i in range(0, viz_height, viz_height // 10):
+            cv2.line(depth_viz, (0, i), (viz_width, i), (50, 50, 50), 1)
 
-        # Add border
-        cv2.rectangle(depth_viz, (0, 0), (viz_size - 1, viz_size - 1), (255, 255, 255), 1)
+        # Add center marker (device position)
+        center_x, center_y = viz_width // 2, viz_height // 2
+        cv2.circle(depth_viz, (center_x, center_y), 8, (0, 255, 0), -1)
+        cv2.circle(depth_viz, (center_x, center_y), 10, (255, 255, 255), 2)
 
-        # Overlay on frame (top-right)
-        x_offset = width - viz_size - 10
-        y_offset = 10
-        frame[y_offset:y_offset + viz_size, x_offset:x_offset + viz_size] = depth_viz
+        # Add distance markers
+        for dist in [1, 2, 3, 4, 5]:
+            radius = int(dist * scale_z)
+            cv2.circle(depth_viz, (center_x, center_y), radius, (100, 100, 100), 1)
+            cv2.putText(depth_viz, f"{dist}m", (center_x + radius + 5, center_y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
 
-        # Add label
-        cv2.putText(frame, "Depth/LiDAR (Top View)", (x_offset, y_offset - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        # Add labels
+        cv2.putText(depth_viz, f"Points: {len(xyz_filtered if len(xyz) > 0 else [])} / {len(xyz)}",
+                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(depth_viz, f"Range: {self.latest_depth.min_depth:.2f}m - {self.latest_depth.max_depth:.2f}m",
+                   (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(depth_viz, "Top-down view (device at center)", (10, viz_height - 10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
-        return frame
+        cv2.imshow(self.depth_window, depth_viz)
 
     def _depth_to_color(self, depths):
         """Convert depth values to colors (blue = close, red = far)"""
@@ -161,57 +184,111 @@ class LiveCameraView:
 
         return colors
 
-    def draw_gps_visualization(self, frame):
-        """Draw GPS location as mini-map"""
+    def show_gps_window(self):
+        """Display GPS location with real map in separate window"""
         if self.latest_gps is None:
-            return frame
+            # Show placeholder
+            placeholder = np.zeros((600, 800, 3), dtype=np.uint8)
+            cv2.putText(placeholder, "Waiting for GPS data...", (250, 300),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.imshow(self.gps_window, placeholder)
+            return
 
-        height, width = frame.shape[:2]
+        # Fetch OpenStreetMap tile
+        try:
+            lat = self.latest_gps.latitude
+            lon = self.latest_gps.longitude
+            zoom = 17  # Street-level view
 
-        # Create GPS map (bottom-right corner, 200x200)
-        map_size = 200
-        gps_map = np.ones((map_size, map_size, 3), dtype=np.uint8) * 40  # Dark background
+            # Download map tile from OpenStreetMap
+            map_img = self._get_osm_map(lat, lon, zoom, width=800, height=600)
 
-        # Draw grid
-        grid_spacing = map_size // 4
-        for i in range(1, 4):
-            cv2.line(gps_map, (i * grid_spacing, 0), (i * grid_spacing, map_size), (80, 80, 80), 1)
-            cv2.line(gps_map, (0, i * grid_spacing), (map_size, i * grid_spacing), (80, 80, 80), 1)
+            if map_img is not None:
+                # Add marker for current position
+                center_x, center_y = 400, 300
 
-        # Draw current position (center)
-        center = (map_size // 2, map_size // 2)
+                # Draw accuracy circle
+                meters_per_pixel = 156543.03392 * math.cos(lat * math.pi / 180) / (2 ** zoom)
+                accuracy_pixels = int(self.latest_gps.horizontal_accuracy / meters_per_pixel)
+                accuracy_pixels = min(accuracy_pixels, 200)  # Cap at 200 pixels
 
-        # Accuracy circle
-        accuracy_pixels = min(int(self.latest_gps.horizontal_accuracy * 2), map_size // 3)
-        cv2.circle(gps_map, center, accuracy_pixels, (100, 100, 0), 1)
+                cv2.circle(map_img, (center_x, center_y), accuracy_pixels, (100, 100, 255), 2)
 
-        # Current position
-        cv2.circle(gps_map, center, 5, (0, 255, 0), -1)
-        cv2.circle(gps_map, center, 6, (255, 255, 255), 1)
+                # Draw position marker
+                cv2.circle(map_img, (center_x, center_y), 10, (0, 0, 255), -1)
+                cv2.circle(map_img, (center_x, center_y), 12, (255, 255, 255), 2)
 
-        # Draw compass directions
-        cv2.putText(gps_map, "N", (map_size // 2 - 5, 15),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        cv2.putText(gps_map, "S", (map_size // 2 - 5, map_size - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        cv2.putText(gps_map, "W", (5, map_size // 2 + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        cv2.putText(gps_map, "E", (map_size - 15, map_size // 2 + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                # Add GPS info overlay
+                overlay = map_img.copy()
+                cv2.rectangle(overlay, (10, 10), (400, 120), (0, 0, 0), -1)
+                map_img = cv2.addWeighted(overlay, 0.6, map_img, 0.4, 0)
 
-        # Add border
-        cv2.rectangle(gps_map, (0, 0), (map_size - 1, map_size - 1), (255, 255, 255), 1)
+                cv2.putText(map_img, f"Lat: {lat:.6f}", (20, 35),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                cv2.putText(map_img, f"Lon: {lon:.6f}", (20, 60),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                cv2.putText(map_img, f"Alt: {self.latest_gps.altitude:.1f}m", (20, 85),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                cv2.putText(map_img, f"Accuracy: ±{self.latest_gps.horizontal_accuracy:.1f}m", (20, 110),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-        # Overlay on frame (bottom-right)
-        x_offset = width - map_size - 10
-        y_offset = height - map_size - 10
-        frame[y_offset:y_offset + map_size, x_offset:x_offset + map_size] = gps_map
+                cv2.imshow(self.gps_window, map_img)
+                self.gps_map_cache = map_img
+        except Exception as e:
+            print(f"❌ Error fetching GPS map: {e}")
+            # Show cached map if available
+            if self.gps_map_cache is not None:
+                cv2.imshow(self.gps_window, self.gps_map_cache)
 
-        # Add label
-        cv2.putText(frame, "GPS Location", (x_offset, y_offset - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    def _get_osm_map(self, lat, lon, zoom, width=800, height=600):
+        """Fetch OpenStreetMap tiles and composite them"""
+        try:
+            # Calculate tile coordinates
+            n = 2.0 ** zoom
+            xtile = int((lon + 180.0) / 360.0 * n)
+            ytile = int((1.0 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2.0 * n)
 
-        return frame
+            # Fetch multiple tiles to cover the area
+            tile_size = 256
+            tiles_x = (width // tile_size) + 1
+            tiles_y = (height // tile_size) + 1
+
+            # Create composite image
+            composite = np.zeros((tiles_y * tile_size, tiles_x * tile_size, 3), dtype=np.uint8)
+
+            for dy in range(tiles_y):
+                for dx in range(tiles_x):
+                    tile_x = xtile + dx - tiles_x // 2
+                    tile_y = ytile + dy - tiles_y // 2
+
+                    # OpenStreetMap tile URL
+                    url = f"https://tile.openstreetmap.org/{zoom}/{tile_x}/{tile_y}.png"
+
+                    # Download tile
+                    response = requests.get(url, headers={'User-Agent': 'ArvosSDK/1.0'}, timeout=5)
+                    if response.status_code == 200:
+                        tile_img = Image.open(BytesIO(response.content))
+                        tile_array = np.array(tile_img)
+
+                        # Convert RGBA to BGR if needed
+                        if tile_array.shape[2] == 4:
+                            tile_array = cv2.cvtColor(tile_array, cv2.COLOR_RGBA2BGR)
+                        elif tile_array.shape[2] == 3:
+                            tile_array = cv2.cvtColor(tile_array, cv2.COLOR_RGB2BGR)
+
+                        # Place tile in composite
+                        y_start = dy * tile_size
+                        x_start = dx * tile_size
+                        composite[y_start:y_start+tile_size, x_start:x_start+tile_size] = tile_array
+
+            # Crop to desired size (centered)
+            crop_y = (composite.shape[0] - height) // 2
+            crop_x = (composite.shape[1] - width) // 2
+            return composite[crop_y:crop_y+height, crop_x:crop_x+width]
+
+        except Exception as e:
+            print(f"Error fetching OSM tiles: {e}")
+            return None
 
     def draw_overlay(self, frame):
         """Draw sensor data overlay on frame"""
@@ -220,10 +297,6 @@ class LiveCameraView:
 
         # Make a copy to avoid modifying original
         frame = frame.copy()
-
-        # First draw visualizations
-        frame = self.draw_depth_visualization(frame)
-        frame = self.draw_gps_visualization(frame)
 
         overlay = frame.copy()
         height, width = overlay.shape[:2]
@@ -307,17 +380,24 @@ class LiveCameraView:
         return frame
 
     def show(self):
-        """Display the frame with overlay"""
+        """Display all windows (camera, depth, GPS)"""
+        # Show camera feed
         if self.latest_frame is not None:
             display_frame = self.draw_overlay(self.latest_frame)
             if display_frame is not None:
-                cv2.imshow('Arvos Live Camera', display_frame)
+                cv2.imshow(self.camera_window, display_frame)
         else:
             # Show placeholder if no frame yet
             placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
             cv2.putText(placeholder, "Waiting for camera frames...", (100, 240),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            cv2.imshow('Arvos Live Camera', placeholder)
+            cv2.imshow(self.camera_window, placeholder)
+
+        # Show depth visualization window
+        self.show_depth_window()
+
+        # Show GPS map window
+        self.show_gps_window()
 
         # Process events
         key = cv2.waitKey(1) & 0xFF
