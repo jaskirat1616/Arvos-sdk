@@ -120,7 +120,11 @@ class LiveCameraView:
         depth_viz = np.zeros((viz_height, viz_width, 3), dtype=np.uint8)
 
         # Extract XZ coordinates (top-down view)
-        xyz = points[:, :3]
+        # Points can be (N, 3) with just XYZ or (N, 6) with XYZ + RGB
+        if points.shape[1] >= 3:
+            xyz = points[:, :3]
+        else:
+            return  # Invalid point cloud format
 
         # Normalize to visualization size
         if len(xyz) > 0:

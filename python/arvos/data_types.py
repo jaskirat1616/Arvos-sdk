@@ -176,26 +176,45 @@ class DepthFrame:
                 print("Could not find 'end_header' in PLY data")
                 return None
 
+            # Parse header to check if colors are present
+            header_text = self.data[:header_end_bytes].decode('utf-8', errors='ignore')
+            has_colors = 'property uchar red' in header_text or 'property uchar r' in header_text
+
             # Binary data starts after header
             binary_data = self.data[header_end_bytes:]
 
-            # Parse binary PLY (assuming float xyz + uchar rgb)
-            # Format: little-endian float32 x, y, z + uint8 r, g, b
-            dtype = np.dtype([
-                ('x', '<f4'), ('y', '<f4'), ('z', '<f4'),
-                ('r', 'u1'), ('g', 'u1'), ('b', 'u1')
-            ])
+            if has_colors:
+                # Parse binary PLY with colors: float xyz + uchar rgb
+                dtype = np.dtype([
+                    ('x', '<f4'), ('y', '<f4'), ('z', '<f4'),
+                    ('r', 'u1'), ('g', 'u1'), ('b', 'u1')
+                ])
 
-            points = np.frombuffer(binary_data, dtype=dtype)
+                points = np.frombuffer(binary_data, dtype=dtype)
 
-            if len(points) == 0:
-                return None
+                if len(points) == 0:
+                    return None
 
-            # Return as (N, 6) array [x, y, z, r, g, b]
-            xyz = np.stack([points['x'], points['y'], points['z']], axis=1)
-            rgb = np.stack([points['r'], points['g'], points['b']], axis=1)
+                # Return as (N, 6) array [x, y, z, r, g, b]
+                xyz = np.stack([points['x'], points['y'], points['z']], axis=1)
+                rgb = np.stack([points['r'], points['g'], points['b']], axis=1)
 
-            return np.hstack([xyz, rgb])
+                return np.hstack([xyz, rgb])
+            else:
+                # Parse binary PLY without colors: only float xyz
+                dtype = np.dtype([
+                    ('x', '<f4'), ('y', '<f4'), ('z', '<f4')
+                ])
+
+                points = np.frombuffer(binary_data, dtype=dtype)
+
+                if len(points) == 0:
+                    return None
+
+                # Return as (N, 3) array [x, y, z]
+                xyz = np.stack([points['x'], points['y'], points['z']], axis=1)
+
+                return xyz
 
         except Exception as e:
             print(f"Failed to parse PLY: {e}")
