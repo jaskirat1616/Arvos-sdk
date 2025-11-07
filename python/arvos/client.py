@@ -114,16 +114,20 @@ class ArvosClient:
                 await self._handle_handshake(data)
             elif msg_type == "imu":
                 if self.on_imu:
-                    await self.on_imu(IMUData(
+                    imu_data = IMUData(
                         timestamp_ns=data["timestampNs"],
                         angular_velocity=tuple(data["angularVelocity"]),
                         linear_acceleration=tuple(data["linearAcceleration"]),
                         magnetic_field=tuple(data.get("magneticField")) if data.get("magneticField") else None,
                         attitude=tuple([data["attitude"]["roll"], data["attitude"]["pitch"], data["attitude"]["yaw"]]) if "attitude" in data else None
-                    ))
+                    )
+                    if asyncio.iscoroutinefunction(self.on_imu):
+                        await self.on_imu(imu_data)
+                    else:
+                        self.on_imu(imu_data)
             elif msg_type == "gps":
                 if self.on_gps:
-                    await self.on_gps(GPSData(
+                    gps_data = GPSData(
                         timestamp_ns=data["timestampNs"],
                         latitude=data["latitude"],
                         longitude=data["longitude"],
@@ -132,15 +136,23 @@ class ArvosClient:
                         vertical_accuracy=data["verticalAccuracy"],
                         speed=data["speed"],
                         course=data["course"]
-                    ))
+                    )
+                    if asyncio.iscoroutinefunction(self.on_gps):
+                        await self.on_gps(gps_data)
+                    else:
+                        self.on_gps(gps_data)
             elif msg_type == "pose":
                 if self.on_pose:
-                    await self.on_pose(PoseData(
+                    pose_data = PoseData(
                         timestamp_ns=data["timestampNs"],
                         position=tuple(data["position"]),
                         orientation=tuple(data["orientation"]),
                         tracking_state=data["trackingState"]
-                    ))
+                    )
+                    if asyncio.iscoroutinefunction(self.on_pose):
+                        await self.on_pose(pose_data)
+                    else:
+                        self.on_pose(pose_data)
             elif msg_type == "status":
                 if self.on_status:
                     if asyncio.iscoroutinefunction(self.on_status):
