@@ -14,7 +14,7 @@ Usage:
 import asyncio
 import cv2
 import numpy as np
-from arvos import ArvosServer, IMUData, PoseData, CameraFrame
+from arvos import ArvosServer, IMUData, PoseData, CameraFrame, DepthFrame, GPSData
 from PIL import Image
 import io
 from datetime import datetime
@@ -25,7 +25,10 @@ class LiveCameraView:
         self.latest_frame = None
         self.latest_imu = None
         self.latest_pose = None
+        self.latest_depth = None
+        self.latest_gps = None
         self.frame_count = 0
+        self.depth_count = 0
         self.fps = 0
         self.last_time = datetime.now()
 
@@ -61,6 +64,15 @@ class LiveCameraView:
         """Update pose data"""
         self.latest_pose = data
 
+    def update_depth(self, frame: DepthFrame):
+        """Update depth/LiDAR data"""
+        self.latest_depth = frame
+        self.depth_count += 1
+
+    def update_gps(self, data: GPSData):
+        """Update GPS data"""
+        self.latest_gps = data
+
     def draw_overlay(self, frame):
         """Draw sensor data overlay on frame"""
         if frame is None:
@@ -69,40 +81,81 @@ class LiveCameraView:
         overlay = frame.copy()
         height, width = overlay.shape[:2]
 
-        # Semi-transparent background for text
-        cv2.rectangle(overlay, (10, 10), (400, 200), (0, 0, 0), -1)
+        # Semi-transparent background for text (larger for more data)
+        cv2.rectangle(overlay, (10, 10), (500, 350), (0, 0, 0), -1)
         frame = cv2.addWeighted(overlay, 0.3, frame, 0.7, 0)
 
+        y_pos = 40
+
         # FPS
-        cv2.putText(frame, f"FPS: {self.fps:.1f}", (20, 40),
+        cv2.putText(frame, f"Camera FPS: {self.fps:.1f}", (20, y_pos),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        y_pos += 30
 
         # IMU data
         if self.latest_imu:
             acc = self.latest_imu.linear_acceleration
             gyro = self.latest_imu.angular_velocity
 
-            cv2.putText(frame, "IMU:", (20, 70),
+            cv2.putText(frame, "IMU:", (20, y_pos),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            y_pos += 25
             cv2.putText(frame, f"  Accel: [{acc[0]:.2f}, {acc[1]:.2f}, {acc[2]:.2f}] m/s²",
-                        (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            y_pos += 20
             cv2.putText(frame, f"  Gyro:  [{gyro[0]:.2f}, {gyro[1]:.2f}, {gyro[2]:.2f}] rad/s",
-                        (20, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            y_pos += 30
 
         # Pose data
         if self.latest_pose:
             pos = self.latest_pose.position
             tracking = self.latest_pose.tracking_state
 
-            cv2.putText(frame, "Pose:", (20, 145),
+            cv2.putText(frame, "Pose:", (20, y_pos),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            y_pos += 25
             cv2.putText(frame, f"  Pos: [{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}] m",
-                        (20, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            y_pos += 20
 
             # Tracking state with color
             state_color = (0, 255, 0) if tracking == "normal" else (0, 165, 255)
             cv2.putText(frame, f"  Tracking: {tracking}",
-                        (20, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, state_color, 1)
+                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, state_color, 1)
+            y_pos += 30
+
+        # Depth/LiDAR data
+        if self.latest_depth:
+            cv2.putText(frame, "Depth/LiDAR:", (20, y_pos),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            y_pos += 25
+            cv2.putText(frame, f"  Points: {self.latest_depth.point_count:,}",
+                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            y_pos += 20
+            cv2.putText(frame, f"  Range: {self.latest_depth.min_depth:.2f} - {self.latest_depth.max_depth:.2f} m",
+                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            y_pos += 20
+            cv2.putText(frame, f"  Frames: {self.depth_count}",
+                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            y_pos += 30
+
+        # GPS data
+        if self.latest_gps:
+            cv2.putText(frame, "GPS:", (20, y_pos),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            y_pos += 25
+            cv2.putText(frame, f"  Lat: {self.latest_gps.latitude:.6f}°",
+                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            y_pos += 20
+            cv2.putText(frame, f"  Lon: {self.latest_gps.longitude:.6f}°",
+                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            y_pos += 20
+            cv2.putText(frame, f"  Alt: {self.latest_gps.altitude:.1f} m ±{self.latest_gps.vertical_accuracy:.1f}m",
+                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            y_pos += 20
+            cv2.putText(frame, f"  Accuracy: ±{self.latest_gps.horizontal_accuracy:.1f} m",
+                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
         return frame
 
@@ -135,6 +188,8 @@ async def main():
     server.on_camera = lambda frame: viewer.update_camera(frame)
     server.on_imu = lambda data: viewer.update_imu(data)
     server.on_pose = lambda data: viewer.update_pose(data)
+    server.on_depth = lambda frame: viewer.update_depth(frame)
+    server.on_gps = lambda data: viewer.update_gps(data)
 
     async def on_connect(client_id: str):
         print(f"✅ Client connected: {client_id}")
