@@ -8,10 +8,10 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="arvos",
+    name="arvos-sdk",
     version="1.0.0",
-    author="Arvos Team",
-    author_email="",
+    author="Jaskirat Singh",
+    author_email="jaskirat1616@gmail.com",
     description="Python SDK for receiving sensor data from Arvos iPhone app",
     long_description=long_description,
     long_description_content_type="text/markdown",

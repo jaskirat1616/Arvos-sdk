@@ -39,6 +39,9 @@ env/
 .coverage
 htmlcov/
 .tox/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
 
 # Output data
 arvos_data_*/
@@ -53,3 +56,11 @@ arvos_camera_*/
 # OS
 .DS_Store
 Thumbs.db
+
+# Packaging auth
+.pypirc
+
+# Local env files
+.python-version
+.env
+.env.*
