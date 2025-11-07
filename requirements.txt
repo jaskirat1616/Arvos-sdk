@@ -1,0 +1,15 @@
+websockets>=11.0
+qrcode[pil]>=7.4
+numpy>=1.20.0
+
+# Optional dependencies
+# Visualization
+matplotlib>=3.5.0
+
+# Image processing
+Pillow>=9.0.0
+opencv-python>=4.5.0
+
+# For ROS 2 bridge (requires ROS 2 installation)
+# rclpy
+# cv_bridge
