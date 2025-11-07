@@ -6,7 +6,7 @@ Displays camera frames in real-time with sensor data overlay.
 Includes visual representations of depth/LiDAR and GPS data in separate windows.
 
 Requirements:
-    pip install opencv-python Pillow numpy requests
+    pip install opencv-python Pillow numpy requests matplotlib
 
 Usage:
     python live_camera_view.py
@@ -22,6 +22,10 @@ from datetime import datetime
 import math
 import requests
 from io import BytesIO
+import matplotlib
+matplotlib.use('TkAgg')  # Use TkAgg backend for better performance
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 
 class LiveCameraView:
@@ -43,8 +47,17 @@ class LiveCameraView:
 
         # Window names
         self.camera_window = 'Arvos - Camera Feed'
-        self.depth_window = 'Arvos - Depth/LiDAR'
         self.gps_window = 'Arvos - GPS Map'
+
+        # Matplotlib 3D point cloud figure
+        self.fig = plt.figure(figsize=(10, 8))
+        self.ax = self.fig.add_subplot(111, projection='3d')
+        self.ax.set_xlabel('X (m)')
+        self.ax.set_ylabel('Z (m)')
+        self.ax.set_zlabel('Y (m)')
+        self.ax.set_title('LiDAR Point Cloud (Live)')
+        plt.ion()  # Interactive mode
+        plt.show(block=False)
 
     def update_camera(self, frame: CameraFrame):
         """Update camera frame"""
@@ -97,13 +110,8 @@ class LiveCameraView:
         print(f"🌍 GPS: ({data.latitude:.6f}, {data.longitude:.6f}), ±{data.horizontal_accuracy:.1f}m")
 
     def show_depth_window(self):
-        """Display depth/LiDAR visualization in separate window"""
+        """Display depth/LiDAR point cloud in 3D matplotlib window"""
         if self.latest_depth is None:
-            # Show placeholder
-            placeholder = np.zeros((600, 800, 3), dtype=np.uint8)
-            cv2.putText(placeholder, "Waiting for depth data...", (250, 300),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            cv2.imshow(self.depth_window, placeholder)
             return
 
         # Parse point cloud
@@ -115,70 +123,51 @@ class LiveCameraView:
             print(f"❌ Error parsing point cloud: {e}")
             return
 
-        # Create larger depth visualization (800x600)
-        viz_width, viz_height = 800, 600
-        depth_viz = np.zeros((viz_height, viz_width, 3), dtype=np.uint8)
-
-        # Extract XZ coordinates (top-down view)
-        # Points can be (N, 3) with just XYZ or (N, 6) with XYZ + RGB
+        # Extract XYZ coordinates
         if points.shape[1] >= 3:
             xyz = points[:, :3]
         else:
-            return  # Invalid point cloud format
+            return
 
-        # Normalize to visualization size
-        if len(xyz) > 0:
-            # Use only points within reasonable range
-            max_range = 5.0  # 5 meters
-            mask = (np.abs(xyz[:, 0]) < max_range) & (np.abs(xyz[:, 2]) < max_range)
-            xyz_filtered = xyz[mask]
+        # Extract colors if available
+        if points.shape[1] >= 6:
+            rgb = points[:, 3:6] / 255.0  # Normalize to 0-1
+        else:
+            # Color by height (Y axis) if no colors provided
+            y_normalized = (xyz[:, 1] - xyz[:, 1].min()) / (xyz[:, 1].max() - xyz[:, 1].min() + 1e-6)
+            rgb = plt.cm.viridis(y_normalized)[:, :3]
 
-            if len(xyz_filtered) > 0:
-                # Map to image coordinates
-                scale_x = viz_width / (2 * max_range)
-                scale_z = viz_height / (2 * max_range)
-                x_img = ((xyz_filtered[:, 0] + max_range) * scale_x).astype(int)
-                z_img = ((xyz_filtered[:, 2] + max_range) * scale_z).astype(int)
+        # Subsample for performance (show every Nth point)
+        subsample = max(1, len(xyz) // 5000)  # Max 5000 points
+        xyz_sub = xyz[::subsample]
+        rgb_sub = rgb[::subsample]
 
-                # Clip to image bounds
-                x_img = np.clip(x_img, 0, viz_width - 1)
-                z_img = np.clip(z_img, 0, viz_height - 1)
+        # Clear previous plot
+        self.ax.clear()
 
-                # Color based on depth (Y axis)
-                depths = xyz_filtered[:, 1]
-                colors = self._depth_to_color(depths)
+        # Plot point cloud
+        self.ax.scatter(xyz_sub[:, 0], xyz_sub[:, 2], xyz_sub[:, 1],
+                       c=rgb_sub, s=1, alpha=0.6)
 
-                # Draw points (larger size for visibility)
-                for i in range(len(x_img)):
-                    cv2.circle(depth_viz, (x_img[i], z_img[i]), 2, colors[i].tolist(), -1)
+        # Set labels and limits
+        self.ax.set_xlabel('X (m)')
+        self.ax.set_ylabel('Z (m)')
+        self.ax.set_zlabel('Y (m)')
+        self.ax.set_title(f'LiDAR Point Cloud - {len(xyz)} points (showing {len(xyz_sub)})')
 
-        # Add grid lines
-        for i in range(0, viz_width, viz_width // 10):
-            cv2.line(depth_viz, (i, 0), (i, viz_height), (50, 50, 50), 1)
-        for i in range(0, viz_height, viz_height // 10):
-            cv2.line(depth_viz, (0, i), (viz_width, i), (50, 50, 50), 1)
+        # Set axis limits
+        max_range = 3.0
+        self.ax.set_xlim(-max_range, max_range)
+        self.ax.set_ylim(-max_range, max_range)
+        self.ax.set_zlim(-max_range, max_range)
 
-        # Add center marker (device position)
-        center_x, center_y = viz_width // 2, viz_height // 2
-        cv2.circle(depth_viz, (center_x, center_y), 8, (0, 255, 0), -1)
-        cv2.circle(depth_viz, (center_x, center_y), 10, (255, 255, 255), 2)
+        # Add origin marker (device position)
+        self.ax.scatter([0], [0], [0], c='red', s=100, marker='o', label='Device')
+        self.ax.legend()
 
-        # Add distance markers
-        for dist in [1, 2, 3, 4, 5]:
-            radius = int(dist * scale_z)
-            cv2.circle(depth_viz, (center_x, center_y), radius, (100, 100, 100), 1)
-            cv2.putText(depth_viz, f"{dist}m", (center_x + radius + 5, center_y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
-
-        # Add labels
-        cv2.putText(depth_viz, f"Points: {len(xyz_filtered if len(xyz) > 0 else [])} / {len(xyz)}",
-                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(depth_viz, f"Range: {self.latest_depth.min_depth:.2f}m - {self.latest_depth.max_depth:.2f}m",
-                   (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(depth_viz, "Top-down view (device at center)", (10, viz_height - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-
-        cv2.imshow(self.depth_window, depth_viz)
+        # Update plot
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
 
     def _depth_to_color(self, depths):
         """Convert depth values to colors (blue = close, red = far)"""
