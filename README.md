@@ -13,6 +13,8 @@ Arvos SDK provides Python clients and servers to receive iPhone sensor data over
 
 ## Installation
 
+Package available at: https://pypi.org/project/arvos-sdk/
+
 ### Basic Installation
 ```bash
 pip install -r requirements.txt

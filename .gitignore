@@ -64,3 +64,8 @@ Thumbs.db
 .python-version
 .env
 .env.*
+
+# Local publishing helpers
+publish.sh
+PYPI_UPLOAD_GUIDE.md
+pypi_push.sh
