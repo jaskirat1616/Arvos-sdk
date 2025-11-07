@@ -116,12 +116,19 @@ class ArvosClient:
                 await self._handle_pose(data)
             elif msg_type == "status":
                 if self.on_status:
-                    self.on_status(data)
+                    if asyncio.iscoroutinefunction(self.on_status):
+                        await self.on_status(data)
+                    else:
+                        self.on_status(data)
             elif msg_type == "error":
                 if self.on_error:
-                    self.on_error(data.get("error"), data.get("details"))
+                    if asyncio.iscoroutinefunction(self.on_error):
+                        await self.on_error(data.get("error"), data.get("details"))
+                    else:
+                        self.on_error(data.get("error"), data.get("details"))
             else:
-                print(f"Unknown message type: {msg_type}")
+                print(f"Unknown JSON message type: {msg_type}")
+                print(f"DEBUG JSON: Keys = {data.keys()}, Message = {message[:200]}")
 
         except json.JSONDecodeError as e:
             print(f"Failed to parse JSON: {e}")
