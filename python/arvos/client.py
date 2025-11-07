@@ -6,6 +6,7 @@ import asyncio
 import websockets
 import json
 import struct
+import base64
 from typing import Callable, Optional, Dict, Any
 from .data_types import (
     IMUData, GPSData, PoseData, CameraFrame, DepthFrame,
@@ -150,20 +151,29 @@ class ArvosClient:
             binary_data = message[4+header_size:]
 
             # The header contains "type", "timestampNs", "dataSize", "metadata"
-            # The metadata field contains the actual sensor metadata (JSON-encoded as Data/bytes)
+            # The metadata field is base64-encoded JSON
             msg_type = header.get("type")
 
             # Parse nested metadata if present
             metadata = header
             if "metadata" in header:
                 metadata_field = header["metadata"]
-                # Metadata is encoded as Data which becomes an array of byte values in JSON
-                if isinstance(metadata_field, list):
-                    # Convert array of bytes to actual bytes
+
+                # Metadata is base64-encoded
+                if isinstance(metadata_field, str):
+                    try:
+                        metadata_bytes = base64.b64decode(metadata_field)
+                        metadata = json.loads(metadata_bytes.decode('utf-8'))
+                    except Exception as e:
+                        print(f"Failed to parse metadata: {e}")
+                        pass
+                # Or it could be an array of bytes
+                elif isinstance(metadata_field, list):
                     metadata_bytes = bytes(metadata_field)
                     try:
                         metadata = json.loads(metadata_bytes.decode('utf-8'))
-                    except:
+                    except Exception as e:
+                        print(f"Failed to parse metadata: {e}")
                         pass
 
             if msg_type == "camera":
@@ -175,6 +185,8 @@ class ArvosClient:
 
         except Exception as e:
             print(f"Error handling binary message: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def _handle_handshake(self, data: Dict[str, Any]):
         """Handle handshake message"""
