@@ -44,6 +44,9 @@ class ArvosClient:
         self.on_error: Optional[Callable[[str, Optional[str]], None]] = None
         self.on_disconnect: Optional[Callable[[], None]] = None
 
+        # Binary message buffer for handling fragmented messages
+        self.binary_buffer = b""
+
         # Statistics
         self.messages_received = 0
         self.bytes_received = 0
@@ -110,11 +113,34 @@ class ArvosClient:
             if msg_type == "handshake":
                 await self._handle_handshake(data)
             elif msg_type == "imu":
-                await self._handle_imu(data)
+                if self.on_imu:
+                    await self.on_imu(IMUData(
+                        timestamp_ns=data["timestampNs"],
+                        angular_velocity=tuple(data["angularVelocity"]),
+                        linear_acceleration=tuple(data["linearAcceleration"]),
+                        magnetic_field=tuple(data.get("magneticField")) if data.get("magneticField") else None,
+                        attitude=tuple([data["attitude"]["roll"], data["attitude"]["pitch"], data["attitude"]["yaw"]]) if "attitude" in data else None
+                    ))
             elif msg_type == "gps":
-                await self._handle_gps(data)
+                if self.on_gps:
+                    await self.on_gps(GPSData(
+                        timestamp_ns=data["timestampNs"],
+                        latitude=data["latitude"],
+                        longitude=data["longitude"],
+                        altitude=data["altitude"],
+                        horizontal_accuracy=data["horizontalAccuracy"],
+                        vertical_accuracy=data["verticalAccuracy"],
+                        speed=data["speed"],
+                        course=data["course"]
+                    ))
             elif msg_type == "pose":
-                await self._handle_pose(data)
+                if self.on_pose:
+                    await self.on_pose(PoseData(
+                        timestamp_ns=data["timestampNs"],
+                        position=tuple(data["position"]),
+                        orientation=tuple(data["orientation"]),
+                        tracking_state=data["trackingState"]
+                    ))
             elif msg_type == "status":
                 if self.on_status:
                     if asyncio.iscoroutinefunction(self.on_status):
@@ -139,24 +165,39 @@ class ArvosClient:
     async def _handle_binary_message(self, message: bytes):
         """Handle binary message (camera, depth)"""
         try:
+            # Add to buffer
+            self.binary_buffer += message
+
             # Parse binary format: [Header Size (4 bytes)][JSON Header][Binary Data]
-            if len(message) < 4:
-                print("Binary message too short")
+            if len(self.binary_buffer) < 4:
+                # Not enough data yet
                 return
 
             # Read header size
-            header_size = struct.unpack('<I', message[:4])[0]
+            header_size = struct.unpack('<I', self.binary_buffer[:4])[0]
 
-            if len(message) < 4 + header_size:
-                print("Incomplete binary message")
+            # Check if we have complete header
+            if len(self.binary_buffer) < 4 + header_size:
+                # Waiting for more data
                 return
 
-            # Parse header JSON
-            header_json = message[4:4+header_size].decode('utf-8')
+            # Parse header to get total expected size
+            header_json = self.binary_buffer[4:4+header_size].decode('utf-8')
             header = json.loads(header_json)
+            data_size = header.get("dataSize", 0)
 
-            # Extract binary data
-            binary_data = message[4+header_size:]
+            total_expected = 4 + header_size + data_size
+
+            if len(self.binary_buffer) < total_expected:
+                # Waiting for rest of binary data
+                return
+
+            # We have complete message!
+            complete_message = self.binary_buffer[:total_expected]
+            self.binary_buffer = self.binary_buffer[total_expected:]  # Keep remainder
+
+            # Extract binary data from complete message
+            binary_data = complete_message[4+header_size:]
 
             # The header contains "type", "timestampNs", "dataSize", "metadata"
             # The metadata field is base64-encoded JSON
