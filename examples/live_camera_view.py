@@ -286,10 +286,13 @@ class LiveCameraView:
                         tile_array = np.array(tile_img)
 
                         # Convert RGBA to BGR if needed
-                        if tile_array.shape[2] == 4:
+                        if len(tile_array.shape) == 3 and tile_array.shape[2] == 4:
                             tile_array = cv2.cvtColor(tile_array, cv2.COLOR_RGBA2BGR)
-                        elif tile_array.shape[2] == 3:
+                        elif len(tile_array.shape) == 3 and tile_array.shape[2] == 3:
                             tile_array = cv2.cvtColor(tile_array, cv2.COLOR_RGB2BGR)
+                        elif len(tile_array.shape) == 2:
+                            # Grayscale image, convert to BGR
+                            tile_array = cv2.cvtColor(tile_array, cv2.COLOR_GRAY2BGR)
 
                         # Place tile in composite
                         y_start = dy * tile_size
