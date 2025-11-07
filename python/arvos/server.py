@@ -87,7 +87,11 @@ class ArvosServer:
             print(f"Server listening...")
             await asyncio.Future()  # Run forever
 
-    async def _handle_client(self, websocket: websockets.WebSocketServerProtocol, path: str):
+    async def _handle_client(
+        self,
+        websocket: websockets.WebSocketServerProtocol,
+        path: Optional[str] = None,
+    ):
         """Handle new client connection"""
         client_id = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
         self.clients.add(websocket)

@@ -149,12 +149,27 @@ class ArvosClient:
             # Extract binary data
             binary_data = message[4+header_size:]
 
+            # The header contains "type", "timestampNs", "dataSize", "metadata"
+            # The metadata field contains the actual sensor metadata (JSON-encoded as Data/bytes)
             msg_type = header.get("type")
 
+            # Parse nested metadata if present
+            metadata = header
+            if "metadata" in header:
+                metadata_field = header["metadata"]
+                # Metadata is encoded as Data which becomes an array of byte values in JSON
+                if isinstance(metadata_field, list):
+                    # Convert array of bytes to actual bytes
+                    metadata_bytes = bytes(metadata_field)
+                    try:
+                        metadata = json.loads(metadata_bytes.decode('utf-8'))
+                    except:
+                        pass
+
             if msg_type == "camera":
-                await self._handle_camera(header, binary_data)
+                await self._handle_camera(metadata, binary_data)
             elif msg_type == "depth":
-                await self._handle_depth(header, binary_data)
+                await self._handle_depth(metadata, binary_data)
             else:
                 print(f"Unknown binary message type: {msg_type}")
 
