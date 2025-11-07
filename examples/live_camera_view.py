@@ -6,7 +6,7 @@ Displays camera frames in real-time with sensor data overlay.
 Includes visual representations of depth/LiDAR and GPS data in separate windows.
 
 Requirements:
-    pip install opencv-python Pillow numpy requests matplotlib
+    pip install opencv-python Pillow numpy requests
 
 Usage:
     python live_camera_view.py
@@ -22,10 +22,6 @@ from datetime import datetime
 import math
 import requests
 from io import BytesIO
-import matplotlib
-matplotlib.use('TkAgg')  # Use TkAgg backend for better performance
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 
 
 class LiveCameraView:
@@ -48,16 +44,6 @@ class LiveCameraView:
         # Window names
         self.camera_window = 'Arvos - Camera Feed'
         self.gps_window = 'Arvos - GPS Map'
-
-        # Matplotlib 3D point cloud figure
-        self.fig = plt.figure(figsize=(10, 8))
-        self.ax = self.fig.add_subplot(111, projection='3d')
-        self.ax.set_xlabel('X (m)')
-        self.ax.set_ylabel('Z (m)')
-        self.ax.set_zlabel('Y (m)')
-        self.ax.set_title('LiDAR Point Cloud (Live)')
-        plt.ion()  # Interactive mode
-        plt.show(block=False)
 
     def update_camera(self, frame: CameraFrame):
         """Update camera frame"""
@@ -110,11 +96,16 @@ class LiveCameraView:
         print(f"🌍 GPS: ({data.latitude:.6f}, {data.longitude:.6f}), ±{data.horizontal_accuracy:.1f}m")
 
     def show_depth_window(self):
-        """Display depth/LiDAR point cloud in 3D matplotlib window"""
+        """Display depth map visualization"""
         if self.latest_depth is None:
+            # Show placeholder
+            placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(placeholder, "Waiting for depth data...", (180, 240),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.imshow('Arvos - Depth Map', placeholder)
             return
 
-        # Parse point cloud
+        # Parse point cloud to create depth map
         try:
             points = self.latest_depth.to_point_cloud()
             if points is None or len(points) == 0:
@@ -129,45 +120,52 @@ class LiveCameraView:
         else:
             return
 
-        # Extract colors if available
-        if points.shape[1] >= 6:
-            rgb = points[:, 3:6] / 255.0  # Normalize to 0-1
+        # Create depth map image (project 3D points to 2D depth image)
+        depth_width, depth_height = 640, 480
+        depth_image = np.zeros((depth_height, depth_width), dtype=np.float32)
+        count_image = np.zeros((depth_height, depth_width), dtype=np.int32)
+
+        # Project points onto image plane
+        for point in xyz:
+            x, y, z = point
+
+            # Simple orthographic projection (you could use camera intrinsics for better projection)
+            # Map X to image width, Z to image height
+            img_x = int((x + 3.0) / 6.0 * depth_width)  # Map -3 to 3 meters to 0-640
+            img_y = int((z + 3.0) / 6.0 * depth_height)  # Map -3 to 3 meters to 0-480
+
+            if 0 <= img_x < depth_width and 0 <= img_y < depth_height:
+                depth_image[img_y, img_x] += abs(y)  # Use Y as depth value
+                count_image[img_y, img_x] += 1
+
+        # Average depth values where multiple points projected to same pixel
+        mask = count_image > 0
+        depth_image[mask] /= count_image[mask]
+
+        # Normalize and colorize depth map
+        if depth_image.max() > 0:
+            depth_normalized = depth_image / depth_image.max()
         else:
-            # Color by height (Y axis) if no colors provided
-            y_normalized = (xyz[:, 1] - xyz[:, 1].min()) / (xyz[:, 1].max() - xyz[:, 1].min() + 1e-6)
-            rgb = plt.cm.viridis(y_normalized)[:, :3]
+            depth_normalized = depth_image
 
-        # Subsample for performance (show every Nth point)
-        subsample = max(1, len(xyz) // 5000)  # Max 5000 points
-        xyz_sub = xyz[::subsample]
-        rgb_sub = rgb[::subsample]
+        # Apply colormap (COLORMAP_JET for depth - blue=close, red=far)
+        depth_colored = cv2.applyColorMap((depth_normalized * 255).astype(np.uint8), cv2.COLORMAP_JET)
 
-        # Clear previous plot
-        self.ax.clear()
+        # Set background to black where no depth data
+        depth_colored[~mask] = [0, 0, 0]
 
-        # Plot point cloud
-        self.ax.scatter(xyz_sub[:, 0], xyz_sub[:, 2], xyz_sub[:, 1],
-                       c=rgb_sub, s=1, alpha=0.6)
+        # Resize for better visibility
+        depth_colored = cv2.resize(depth_colored, (960, 720))
 
-        # Set labels and limits
-        self.ax.set_xlabel('X (m)')
-        self.ax.set_ylabel('Z (m)')
-        self.ax.set_zlabel('Y (m)')
-        self.ax.set_title(f'LiDAR Point Cloud - {len(xyz)} points (showing {len(xyz_sub)})')
+        # Add info overlay
+        cv2.putText(depth_colored, f"Points: {len(xyz)}", (20, 40),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(depth_colored, f"Range: {self.latest_depth.min_depth:.2f}m - {self.latest_depth.max_depth:.2f}m",
+                   (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(depth_colored, "Blue=Close, Red=Far", (20, 120),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-        # Set axis limits
-        max_range = 3.0
-        self.ax.set_xlim(-max_range, max_range)
-        self.ax.set_ylim(-max_range, max_range)
-        self.ax.set_zlim(-max_range, max_range)
-
-        # Add origin marker (device position)
-        self.ax.scatter([0], [0], [0], c='red', s=100, marker='o', label='Device')
-        self.ax.legend()
-
-        # Update plot
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
+        cv2.imshow('Arvos - Depth Map', depth_colored)
 
     def _depth_to_color(self, depths):
         """Convert depth values to colors (blue = close, red = far)"""
