@@ -342,7 +342,10 @@ class ArvosClient:
         )
 
         if self.on_camera:
-            await self.on_camera(camera_frame)
+            if asyncio.iscoroutinefunction(self.on_camera):
+                await self.on_camera(camera_frame)
+            else:
+                self.on_camera(camera_frame)
 
     async def _handle_depth(self, metadata: Dict[str, Any], data: bytes):
         """Handle depth frame"""
@@ -356,7 +359,10 @@ class ArvosClient:
         )
 
         if self.on_depth:
-            await self.on_depth(depth_frame)
+            if asyncio.iscoroutinefunction(self.on_depth):
+                await self.on_depth(depth_frame)
+            else:
+                self.on_depth(depth_frame)
 
     async def send_command(self, command: str, **kwargs):
         """Send command to iPhone app"""
