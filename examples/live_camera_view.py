@@ -125,8 +125,12 @@ class LiveCameraView:
         depth_image = np.zeros((depth_height, depth_width), dtype=np.float32)
         count_image = np.zeros((depth_height, depth_width), dtype=np.int32)
 
+        # Filter out NaN and inf values
+        valid_mask = np.all(np.isfinite(xyz), axis=1)
+        xyz_valid = xyz[valid_mask]
+
         # Project points onto image plane
-        for point in xyz:
+        for point in xyz_valid:
             x, y, z = point
 
             # Simple orthographic projection (you could use camera intrinsics for better projection)
@@ -200,6 +204,17 @@ class LiveCameraView:
             cv2.imshow(self.gps_window, placeholder)
             return
 
+        # Only update map if GPS changed significantly (more than 10 meters)
+        if self.last_gps_update is not None:
+            lat_diff = abs(self.latest_gps.latitude - self.last_gps_update[0])
+            lon_diff = abs(self.latest_gps.longitude - self.last_gps_update[1])
+            # ~0.0001 degrees = ~11 meters
+            if lat_diff < 0.0001 and lon_diff < 0.0001:
+                # Use cached map
+                if self.gps_map_cache is not None:
+                    cv2.imshow(self.gps_window, self.gps_map_cache)
+                return
+
         # Fetch OpenStreetMap tile
         try:
             lat = self.latest_gps.latitude
@@ -240,6 +255,7 @@ class LiveCameraView:
 
                 cv2.imshow(self.gps_window, map_img)
                 self.gps_map_cache = map_img
+                self.last_gps_update = (lat, lon)
         except Exception as e:
             print(f"❌ Error fetching GPS map: {e}")
             # Show cached map if available
