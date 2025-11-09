@@ -176,9 +176,16 @@ class DepthFrame:
                 print("Could not find 'end_header' in PLY data")
                 return None
 
-            # Parse header to check if colors are present
+            # Parse header to check if colors are present and get vertex count
             header_text = self.data[:header_end_bytes].decode('utf-8', errors='ignore')
             has_colors = 'property uchar red' in header_text or 'property uchar r' in header_text
+
+            # Extract vertex count from header
+            vertex_count = 0
+            for line in header_text.split('\n'):
+                if line.startswith('element vertex'):
+                    vertex_count = int(line.split()[-1])
+                    break
 
             # Binary data starts after header
             binary_data = self.data[header_end_bytes:]
@@ -189,6 +196,24 @@ class DepthFrame:
                     ('x', '<f4'), ('y', '<f4'), ('z', '<f4'),
                     ('r', 'u1'), ('g', 'u1'), ('b', 'u1')
                 ])
+
+                # Validate buffer size - MUST be exact multiple of element size
+                if len(binary_data) % dtype.itemsize != 0:
+                    # Truncate to nearest multiple (silent fix)
+                    available_vertices = len(binary_data) // dtype.itemsize
+                    binary_data = binary_data[:available_vertices * dtype.itemsize]
+                    vertex_count = available_vertices
+
+                if len(binary_data) == 0:
+                    return None
+
+                expected_size = vertex_count * dtype.itemsize
+                available_vertices = len(binary_data) // dtype.itemsize
+
+                if vertex_count != available_vertices:
+                    # Silent fix - just use available data
+                    vertex_count = available_vertices
+                    binary_data = binary_data[:vertex_count * dtype.itemsize]
 
                 points = np.frombuffer(binary_data, dtype=dtype)
 
@@ -205,6 +230,24 @@ class DepthFrame:
                 dtype = np.dtype([
                     ('x', '<f4'), ('y', '<f4'), ('z', '<f4')
                 ])
+
+                # Validate buffer size - MUST be exact multiple of element size
+                if len(binary_data) % dtype.itemsize != 0:
+                    # Truncate to nearest multiple (silent fix)
+                    available_vertices = len(binary_data) // dtype.itemsize
+                    binary_data = binary_data[:available_vertices * dtype.itemsize]
+                    vertex_count = available_vertices
+
+                if len(binary_data) == 0:
+                    return None
+
+                expected_size = vertex_count * dtype.itemsize
+                available_vertices = len(binary_data) // dtype.itemsize
+
+                if vertex_count != available_vertices:
+                    # Silent fix - just use available data
+                    vertex_count = available_vertices
+                    binary_data = binary_data[:vertex_count * dtype.itemsize]
 
                 points = np.frombuffer(binary_data, dtype=dtype)
 

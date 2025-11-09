@@ -22,6 +22,8 @@ from datetime import datetime
 import math
 import requests
 from io import BytesIO
+import concurrent.futures
+import threading
 
 
 class LiveCameraView:
@@ -45,15 +47,15 @@ class LiveCameraView:
         self.camera_window = 'Arvos - Camera Feed'
         self.gps_window = 'Arvos - GPS Map'
 
+        # Main thread display flag (macOS requires GUI on main thread)
+        self.running = False
+
     def update_camera(self, frame: CameraFrame):
         """Update camera frame"""
-        # Decode JPEG
+        # Decode JPEG directly with OpenCV (faster than PIL)
         try:
-            image = Image.open(io.BytesIO(frame.data))
-            img_array = np.array(image)
-
-            # Convert RGB to BGR for OpenCV
-            img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+            # Decode JPEG from bytes using cv2 (much faster than PIL)
+            img_bgr = cv2.imdecode(np.frombuffer(frame.data, dtype=np.uint8), cv2.IMREAD_COLOR)
 
             self.latest_frame = img_bgr
             self.frame_count += 1
@@ -96,16 +98,15 @@ class LiveCameraView:
         print(f"🌍 GPS: ({data.latitude:.6f}, {data.longitude:.6f}), ±{data.horizontal_accuracy:.1f}m")
 
     def show_depth_window(self):
-        """Display depth map visualization"""
+        """Display fast 2D depth visualization using OpenCV"""
         if self.latest_depth is None:
-            # Show placeholder
             placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
             cv2.putText(placeholder, "Waiting for depth data...", (180, 240),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
             cv2.imshow('Arvos - Depth Map', placeholder)
             return
 
-        # Parse point cloud to create depth map
+        # Parse point cloud
         try:
             points = self.latest_depth.to_point_cloud()
             if points is None or len(points) == 0:
@@ -120,54 +121,54 @@ class LiveCameraView:
         else:
             return
 
-        # Create depth map image (project 3D points to 2D depth image)
+        # Filter out NaN and inf values
+        valid_mask = np.all(np.isfinite(xyz), axis=1)
+        xyz = xyz[valid_mask]
+
+        if len(xyz) == 0:
+            return
+
+        # Create fast 2D depth map projection
         depth_width, depth_height = 640, 480
         depth_image = np.zeros((depth_height, depth_width), dtype=np.float32)
         count_image = np.zeros((depth_height, depth_width), dtype=np.int32)
 
-        # Filter out NaN and inf values
-        valid_mask = np.all(np.isfinite(xyz), axis=1)
-        xyz_valid = xyz[valid_mask]
+        # Fast vectorized projection
+        x, y, z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
 
-        # Project points onto image plane
-        for point in xyz_valid:
-            x, y, z = point
+        # Map to image coordinates
+        img_x = ((x + 2.0) / 4.0 * depth_width).astype(int)
+        img_y = ((z + 2.0) / 4.0 * depth_height).astype(int)
 
-            # Simple orthographic projection (you could use camera intrinsics for better projection)
-            # Map X to image width, Z to image height
-            img_x = int((x + 3.0) / 6.0 * depth_width)  # Map -3 to 3 meters to 0-640
-            img_y = int((z + 3.0) / 6.0 * depth_height)  # Map -3 to 3 meters to 0-480
+        # Filter valid coordinates
+        valid = (img_x >= 0) & (img_x < depth_width) & (img_y >= 0) & (img_y < depth_height)
+        img_x = img_x[valid]
+        img_y = img_y[valid]
+        depths = np.abs(y[valid])
 
-            if 0 <= img_x < depth_width and 0 <= img_y < depth_height:
-                depth_image[img_y, img_x] += abs(y)  # Use Y as depth value
-                count_image[img_y, img_x] += 1
+        # Accumulate depths
+        np.add.at(depth_image, (img_y, img_x), depths)
+        np.add.at(count_image, (img_y, img_x), 1)
 
-        # Average depth values where multiple points projected to same pixel
+        # Average where multiple points
         mask = count_image > 0
         depth_image[mask] /= count_image[mask]
 
-        # Normalize and colorize depth map
+        # Normalize and colorize
         if depth_image.max() > 0:
             depth_normalized = depth_image / depth_image.max()
         else:
             depth_normalized = depth_image
 
-        # Apply colormap (COLORMAP_JET for depth - blue=close, red=far)
+        # Apply colormap (JET: blue=close, red=far)
         depth_colored = cv2.applyColorMap((depth_normalized * 255).astype(np.uint8), cv2.COLORMAP_JET)
+        depth_colored[~mask] = [0, 0, 0]  # Black background
 
-        # Set background to black where no depth data
-        depth_colored[~mask] = [0, 0, 0]
-
-        # Resize for better visibility
-        depth_colored = cv2.resize(depth_colored, (960, 720))
-
-        # Add info overlay
-        cv2.putText(depth_colored, f"Points: {len(xyz)}", (20, 40),
-                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        cv2.putText(depth_colored, f"Range: {self.latest_depth.min_depth:.2f}m - {self.latest_depth.max_depth:.2f}m",
-                   (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        cv2.putText(depth_colored, "Blue=Close, Red=Far", (20, 120),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        # Add stats overlay
+        cv2.putText(depth_colored, f"Points: {len(xyz):,}", (20, 40),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(depth_colored, f"Range: {self.latest_depth.min_depth:.2f}-{self.latest_depth.max_depth:.2f}m",
+                   (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
         cv2.imshow('Arvos - Depth Map', depth_colored)
 
@@ -316,115 +317,39 @@ class LiveCameraView:
             return None
 
     def draw_overlay(self, frame):
-        """Draw sensor data overlay on frame"""
+        """Draw minimal overlay - FAST version"""
         if frame is None:
             return None
 
-        # Make a copy to avoid modifying original
-        frame = frame.copy()
-
-        overlay = frame.copy()
-        height, width = overlay.shape[:2]
-
-        # Semi-transparent background for text (larger for more data)
-        cv2.rectangle(overlay, (10, 10), (500, 350), (0, 0, 0), -1)
-        frame = cv2.addWeighted(overlay, 0.3, frame, 0.7, 0)
-
-        y_pos = 40
-
-        # FPS
-        cv2.putText(frame, f"Camera FPS: {self.fps:.1f}", (20, y_pos),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        y_pos += 30
-
-        # IMU data
-        if self.latest_imu:
-            acc = self.latest_imu.linear_acceleration
-            gyro = self.latest_imu.angular_velocity
-
-            cv2.putText(frame, "IMU:", (20, y_pos),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            y_pos += 25
-            cv2.putText(frame, f"  Accel: [{acc[0]:.2f}, {acc[1]:.2f}, {acc[2]:.2f}] m/s²",
-                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            y_pos += 20
-            cv2.putText(frame, f"  Gyro:  [{gyro[0]:.2f}, {gyro[1]:.2f}, {gyro[2]:.2f}] rad/s",
-                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            y_pos += 30
-
-        # Pose data
-        if self.latest_pose:
-            pos = self.latest_pose.position
-            tracking = self.latest_pose.tracking_state
-
-            cv2.putText(frame, "Pose:", (20, y_pos),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            y_pos += 25
-            cv2.putText(frame, f"  Pos: [{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}] m",
-                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            y_pos += 20
-
-            # Tracking state with color
-            state_color = (0, 255, 0) if tracking == "normal" else (0, 165, 255)
-            cv2.putText(frame, f"  Tracking: {tracking}",
-                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, state_color, 1)
-            y_pos += 30
-
-        # Depth/LiDAR data
-        if self.latest_depth:
-            cv2.putText(frame, "Depth/LiDAR:", (20, y_pos),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            y_pos += 25
-            cv2.putText(frame, f"  Points: {self.latest_depth.point_count:,}",
-                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            y_pos += 20
-            cv2.putText(frame, f"  Range: {self.latest_depth.min_depth:.2f} - {self.latest_depth.max_depth:.2f} m",
-                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            y_pos += 20
-            cv2.putText(frame, f"  Frames: {self.depth_count}",
-                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            y_pos += 30
-
-        # GPS data
-        if self.latest_gps:
-            cv2.putText(frame, "GPS:", (20, y_pos),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            y_pos += 25
-            cv2.putText(frame, f"  Lat: {self.latest_gps.latitude:.6f}°",
-                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            y_pos += 20
-            cv2.putText(frame, f"  Lon: {self.latest_gps.longitude:.6f}°",
-                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            y_pos += 20
-            cv2.putText(frame, f"  Alt: {self.latest_gps.altitude:.1f} m ±{self.latest_gps.vertical_accuracy:.1f}m",
-                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            y_pos += 20
-            cv2.putText(frame, f"  Accuracy: ±{self.latest_gps.horizontal_accuracy:.1f} m",
-                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        # Don't copy - draw directly (faster)
+        # Just show FPS in corner
+        cv2.putText(frame, f"FPS: {self.fps:.1f}", (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
 
         return frame
 
     def show(self):
-        """Display all windows (camera, depth, GPS)"""
-        # Show camera feed
+        """Display all windows - MUST run on main thread for macOS"""
+        # Show camera feed ONLY (fastest possible)
         if self.latest_frame is not None:
-            display_frame = self.draw_overlay(self.latest_frame)
-            if display_frame is not None:
-                cv2.imshow(self.camera_window, display_frame)
+            # Add FPS overlay
+            cv2.putText(self.latest_frame, f"FPS: {self.fps:.1f}", (20, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2, cv2.LINE_AA)
+            cv2.imshow(self.camera_window, self.latest_frame)
         else:
             # Show placeholder if no frame yet
             placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(placeholder, "Waiting for camera frames...", (100, 240),
+            cv2.putText(placeholder, "Waiting for camera...", (150, 240),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
             cv2.imshow(self.camera_window, placeholder)
 
-        # Show depth visualization window
-        self.show_depth_window()
+        # Disable depth and GPS temporarily to test max FPS
+        # if self.total_frames % 30 == 0 and self.total_frames > 0:
+        #     self.show_depth_window()
+        # if self.total_frames % 60 == 0 and self.total_frames > 0:
+        #     self.show_gps_window()
 
-        # Show GPS map window
-        self.show_gps_window()
-
-        # Process events
+        # Process events (MUST call for windows to update)
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             return False
@@ -433,6 +358,7 @@ class LiveCameraView:
 
 
 async def main():
+    """Main function with async server and sync display"""
     print("🚀 Starting Arvos Live Camera View")
     print("📱 Connect your iPhone running Arvos")
     print("Press 'q' to quit\n")
@@ -461,25 +387,32 @@ async def main():
     server.on_connect = on_connect
     server.on_disconnect = on_disconnect
 
-    # Create tasks for server and display
-    async def display_loop():
-        while True:
-            if not viewer.show():
-                break
-            await asyncio.sleep(0.01)
-
-    # Run server and display loop concurrently
     print("📡 Starting server...")
 
+    # Start server task
+    server_task = asyncio.create_task(server.start())
+
+    viewer.running = True
+
+    # Display loop as async task
+    async def display_loop():
+        while viewer.running:
+            if not viewer.show():
+                viewer.running = False
+                break
+            await asyncio.sleep(0)  # Yield to other tasks immediately
+
     try:
-        # Run both tasks concurrently
+        # Run server and display concurrently
         await asyncio.gather(
-            server.start(),
-            display_loop()
+            server_task,
+            display_loop(),
+            return_exceptions=True
         )
     except KeyboardInterrupt:
         pass
     finally:
+        viewer.running = False
         cv2.destroyAllWindows()
         print("\n👋 Camera view closed")
 

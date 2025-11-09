@@ -2,13 +2,34 @@
 
 Python SDK for receiving real-time sensor data from the Arvos iPhone app.
 
+## 🌐 NEW: Web Viewer (Zero Install!)
+
+**Stream iPhone sensors to your browser in 30 seconds - no Python required!**
+
+```bash
+cd arvos-sdk/web-viewer
+./start-viewer.sh    # Mac/Linux
+# OR
+start-viewer.bat     # Windows
+```
+
+Then scan the QR code with your iPhone. [→ Full Instructions](web-viewer/README.md)
+
+**Perfect for:**
+- Quick testing without SDK setup
+- Live demos and presentations
+- Students and researchers
+- Any device with a browser
+
+---
+
 ## Overview
 
 Arvos SDK provides Python clients and servers to receive iPhone sensor data over WebSocket, including:
 - **Camera**: RGB video (JPEG compressed)
-- **LiDAR/Depth**: 3D point clouds
-- **IMU**: Accelerometer + gyroscope
-- **ARKit Pose**: 6DOF camera tracking
+- **LiDAR/Depth**: 3D point clouds with confidence maps
+- **IMU**: Accelerometer + gyroscope + gravity reference
+- **ARKit Pose**: 6DOF camera tracking with quality flags
 - **GPS**: Location data
 
 ## Installation
