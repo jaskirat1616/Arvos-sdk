@@ -20,32 +20,40 @@ function generateConnectionURL() {
 }
 
 function updateQRCode() {
-    const canvas = document.getElementById('qrcode');
+    const qrcodeContainer = document.getElementById('qrcode');
     const urlDisplay = document.getElementById('connectionUrl');
     const connectionURL = generateConnectionURL();
 
     // Clear previous QR code
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    qrcodeContainer.innerHTML = '';
+
+    // Check if QRCode library is loaded
+    if (typeof QRCode === 'undefined') {
+        console.error('QRCode library not loaded');
+        qrcodeContainer.innerHTML = '<div style="width:256px;height:256px;display:flex;align-items:center;justify-content:center;background:#f0f0f0;border-radius:8px;"><p style="text-align:center;padding:20px;">QR Code library failed to load.<br>Please check your internet connection.</p></div>';
+        urlDisplay.textContent = connectionURL;
+        urlDisplay.style.color = '#666';
+        return;
+    }
 
     // Generate new QR code
-    QRCode.toCanvas(canvas, connectionURL, {
-        width: 256,
-        margin: 2,
-        color: {
-            dark: '#000000',
-            light: '#FFFFFF'
-        }
-    }, function (error) {
-        if (error) {
-            console.error(error);
-            urlDisplay.textContent = 'Error generating QR code';
-            urlDisplay.style.color = '#ff4444';
-        } else {
-            urlDisplay.textContent = connectionURL;
-            urlDisplay.style.color = '#666';
-        }
-    });
+    try {
+        new QRCode(qrcodeContainer, {
+            text: connectionURL,
+            width: 256,
+            height: 256,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M
+        });
+
+        urlDisplay.textContent = connectionURL;
+        urlDisplay.style.color = '#666';
+    } catch (error) {
+        console.error('Error generating QR code:', error);
+        urlDisplay.textContent = 'Error: ' + error.message;
+        urlDisplay.style.color = '#ff4444';
+    }
 }
 
 function goToViewer() {
@@ -81,19 +89,25 @@ function detectLocalIP() {
 
         if (match) {
             const detectedIP = match[0];
-            // Update the QR code with detected IP
+            // Update the connection URL and regenerate QR
+            const qrcodeContainer = document.getElementById('qrcode');
             const urlDisplay = document.getElementById('connectionUrl');
             const port = document.getElementById('customPort').value || '8765';
             const url = `arvos://${detectedIP}:${port}`;
 
-            QRCode.toCanvas(document.getElementById('qrcode'), url, {
-                width: 256,
-                margin: 2,
-                color: {
-                    dark: '#000000',
-                    light: '#FFFFFF'
-                }
-            });
+            // Clear and regenerate
+            qrcodeContainer.innerHTML = '';
+
+            if (typeof QRCode !== 'undefined') {
+                new QRCode(qrcodeContainer, {
+                    text: url,
+                    width: 256,
+                    height: 256,
+                    colorDark: '#000000',
+                    colorLight: '#ffffff',
+                    correctLevel: QRCode.CorrectLevel.M
+                });
+            }
 
             urlDisplay.textContent = url;
             pc.close();
