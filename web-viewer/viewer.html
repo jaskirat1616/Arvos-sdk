@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARVOS Viewer - Live Sensor Stream</title>
+    <link rel="stylesheet" href="css/minimal.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div class="viewer-container">
+        <div class="viewer-header">
+            <h1>ARVOS Live Viewer</h1>
+            <div class="status-badge">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span id="statusText">Disconnected</span>
+            </div>
+        </div>
+
+        <div class="viewer-content">
+            <div id="canvas-container"></div>
+
+            <div class="controls-panel">
+                <div class="control-group">
+                    <label>Connection</label>
+                    <div class="stats">
+                        <div><span>Status:</span> <span id="connStatus">Disconnected</span></div>
+                        <div><span>Host:</span> <span id="connHost">-</span></div>
+                        <div><span>Port:</span> <span id="connPort">-</span></div>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Stream Stats</label>
+                    <div class="stats">
+                        <div><span>FPS:</span> <span id="statsFPS">0</span></div>
+                        <div><span>Points:</span> <span id="statsPoints">0</span></div>
+                        <div><span>Latency:</span> <span id="statsLatency">0ms</span></div>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Visualization</label>
+                    <button onclick="togglePointCloud()">Toggle Points</button>
+                    <button onclick="toggleCamera()">Toggle Camera</button>
+                    <button onclick="resetView()">Reset View</button>
+                </div>
+
+                <div class="control-group">
+                    <label>Export</label>
+                    <button onclick="downloadPointCloud()">Save Point Cloud</button>
+                    <button onclick="captureFrame()">Capture Frame</button>
+                </div>
+
+                <div class="control-group">
+                    <label>Sensor Data</label>
+                    <div class="stats" id="sensorStats">
+                        <div><span>IMU:</span> <span id="imuData">-</span></div>
+                        <div><span>Pose:</span> <span id="poseData">-</span></div>
+                        <div><span>GPS:</span> <span id="gpsData">-</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/websocket-client.js"></script>
+    <script src="js/threejs-viewer.js"></script>
+    <script src="js/camera-view.js"></script>
+    <script>
+        // Initialize viewer on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const port = urlParams.get('port') || '8765';
+
+            // Update connection info
+            document.getElementById('connPort').textContent = port;
+
+            // Initialize visualization
+            initViewer();
+
+            // Start connection attempt
+            setTimeout(() => {
+                connectToARVOS(port);
+            }, 500);
+        });
+    </script>
+</body>
+</html>
