@@ -17,10 +17,16 @@ function generateConnectionURL() {
     return url;
 }
 
-function updateQRCode() {
+function updateQRCode(actualIP) {
     const qrcodeContainer = document.getElementById('qrcode');
     const urlDisplay = document.getElementById('connectionUrl');
-    const connectionURL = generateConnectionURL();
+    const port = document.getElementById('customPort').value || '8765';
+
+    // QR code gets actual IP if provided, otherwise placeholder
+    const qrURL = actualIP ? `arvos://${actualIP}:${port}` : `arvos://YOUR_COMPUTER_IP:${port}`;
+
+    // Display always shows placeholder
+    const displayURL = `arvos://YOUR_COMPUTER_IP:${port}`;
 
     // Clear previous QR code
     qrcodeContainer.innerHTML = '';
@@ -29,15 +35,15 @@ function updateQRCode() {
     if (typeof QRCode === 'undefined') {
         console.error('QRCode library not loaded');
         qrcodeContainer.innerHTML = '<div style="width:256px;height:256px;display:flex;align-items:center;justify-content:center;background:#f0f0f0;border-radius:8px;"><p style="text-align:center;padding:20px;">QR Code library failed to load.<br>Please check your internet connection.</p></div>';
-        urlDisplay.textContent = connectionURL;
-        urlDisplay.style.color = '#666';
+        urlDisplay.textContent = displayURL;
+        urlDisplay.style.color = '#888';
         return;
     }
 
     // Generate new QR code
     try {
         new QRCode(qrcodeContainer, {
-            text: connectionURL,
+            text: qrURL,  // Actual IP or placeholder
             width: 256,
             height: 256,
             colorDark: '#000000',
@@ -45,8 +51,8 @@ function updateQRCode() {
             correctLevel: QRCode.CorrectLevel.M
         });
 
-        urlDisplay.textContent = connectionURL;
-        urlDisplay.style.color = '#666';
+        urlDisplay.textContent = displayURL;  // Always show placeholder
+        urlDisplay.style.color = '#888';
     } catch (error) {
         console.error('Error generating QR code:', error);
         urlDisplay.textContent = 'Error: ' + error.message;
@@ -87,34 +93,10 @@ function detectLocalIP() {
 
         if (match) {
             const detectedIP = match[0];
-            const port = document.getElementById('customPort').value || '8765';
+            console.log('Detected IP:', detectedIP);
 
-            // QR code uses actual IP
-            const qrURL = `arvos://${detectedIP}:${port}`;
-
-            // Display shows placeholder
-            const displayURL = `arvos://YOUR_COMPUTER_IP:${port}`;
-
-            const qrcodeContainer = document.getElementById('qrcode');
-            const urlDisplay = document.getElementById('connectionUrl');
-
-            // Clear and regenerate QR with actual IP
-            qrcodeContainer.innerHTML = '';
-
-            if (typeof QRCode !== 'undefined') {
-                new QRCode(qrcodeContainer, {
-                    text: qrURL,  // Actual IP in QR code
-                    width: 256,
-                    height: 256,
-                    colorDark: '#000000',
-                    colorLight: '#ffffff',
-                    correctLevel: QRCode.CorrectLevel.M
-                });
-            }
-
-            // Show placeholder text to user
-            urlDisplay.textContent = displayURL;
-            urlDisplay.style.color = '#888';
+            // Update QR code with actual IP
+            updateQRCode(detectedIP);
             pc.close();
         }
     };
@@ -125,11 +107,11 @@ window.addEventListener('DOMContentLoaded', () => {
     // Try to detect IP first
     detectLocalIP();
 
-    // Fallback to default after 1 second if detection fails
+    // Fallback to placeholder after 2 seconds if detection fails
     setTimeout(() => {
         const urlDisplay = document.getElementById('connectionUrl');
         if (urlDisplay.textContent === 'Generating QR code...') {
-            updateQRCode();
+            updateQRCode(null);  // No IP detected, use placeholder
         }
-    }, 1000);
+    }, 2000);
 });
