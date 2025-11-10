@@ -65,53 +65,138 @@ function goToViewer() {
     window.location.href = `viewer.html?port=${port}`;
 }
 
-function detectLocalIP() {
-    // Detect actual IP for QR code, but show placeholder in text
+async function detectLocalIP() {
+    console.log('Starting IP detection...');
+
+    // Method 1: Try to get IP from window.location.hostname
+    const hostname = window.location.hostname;
+    if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1' && hostname !== '') {
+        // Check if it's an IP address
+        const ipRegex = /^([0-9]{1,3}\.){3}[0-9]{1,3}$/;
+        if (ipRegex.test(hostname)) {
+            console.log('IP from hostname:', hostname);
+            updateQRCode(hostname);
+            return;
+        }
+    }
+
+    // Method 2: WebRTC IP detection
     const RTCPeerConnection = window.RTCPeerConnection ||
                                window.webkitRTCPeerConnection ||
                                window.mozRTCPeerConnection;
 
     if (!RTCPeerConnection) {
-        updateQRCode();
+        console.warn('WebRTC not supported, cannot detect IP');
+        // Try to use hostname or ask user
+        promptForIP();
         return;
     }
 
-    const pc = new RTCPeerConnection({iceServers: []});
-    pc.createDataChannel('');
+    try {
+        const pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        });
 
-    pc.createOffer().then(offer => pc.setLocalDescription(offer));
+        pc.createDataChannel('');
 
-    pc.onicecandidate = (ice) => {
-        if (!ice || !ice.candidate || !ice.candidate.candidate) {
-            pc.close();
-            return;
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        let ipFound = false;
+
+        pc.onicecandidate = (ice) => {
+            if (!ice || !ice.candidate || !ice.candidate.candidate) {
+                if (!ipFound) {
+                    setTimeout(() => {
+                        if (!ipFound) {
+                            console.warn('No IP detected via WebRTC');
+                            pc.close();
+                            promptForIP();
+                        }
+                    }, 3000);
+                }
+                return;
+            }
+
+            const candidate = ice.candidate.candidate;
+            console.log('ICE candidate:', candidate);
+
+            // Match IPv4 addresses, but exclude 127.0.0.1
+            const ipRegex = /([0-9]{1,3}\.){3}[0-9]{1,3}/g;
+            const matches = candidate.match(ipRegex);
+
+            if (matches) {
+                for (const ip of matches) {
+                    // Skip localhost and invalid IPs
+                    if (ip !== '127.0.0.1' && !ip.startsWith('0.') && ip !== '0.0.0.0') {
+                        console.log('✅ Detected IP:', ip);
+                        ipFound = true;
+                        updateQRCode(ip);
+                        pc.close();
+                        return;
+                    }
+                }
+            }
+        };
+
+    } catch (error) {
+        console.error('WebRTC detection failed:', error);
+        promptForIP();
+    }
+}
+
+function promptForIP() {
+    // Show input field for manual IP entry
+    const urlDisplay = document.getElementById('connectionUrl');
+    const port = document.getElementById('customPort').value || '8765';
+
+    // Create a more helpful message
+    urlDisplay.innerHTML = `
+        <div style="color: #f59e0b; font-size: 12px; margin-bottom: 10px;">
+            ⚠️ Cannot auto-detect IP. Please enter manually:
+        </div>
+        <input type="text" id="manualIP" placeholder="e.g., 192.168.1.100"
+               style="background: #1a1a1a; border: 1px solid #3b82f6; color: white;
+                      padding: 8px; border-radius: 4px; width: 100%; font-family: monospace;"
+               value="" />
+    `;
+
+    const input = document.getElementById('manualIP');
+    input.focus();
+
+    input.addEventListener('input', (e) => {
+        const ip = e.target.value.trim();
+        if (ip && /^([0-9]{1,3}\.){3}[0-9]{1,3}$/.test(ip)) {
+            updateQRCode(ip);
         }
+    });
 
-        const candidate = ice.candidate.candidate;
-        const ipRegex = /([0-9]{1,3}\.){3}[0-9]{1,3}/;
-        const match = ipRegex.exec(candidate);
-
-        if (match) {
-            const detectedIP = match[0];
-            console.log('Detected IP:', detectedIP);
-
-            // Update QR code with actual IP
-            updateQRCode(detectedIP);
-            pc.close();
+    input.addEventListener('blur', (e) => {
+        const ip = e.target.value.trim();
+        if (ip && /^([0-9]{1,3}\.){3}[0-9]{1,3}$/.test(ip)) {
+            updateQRCode(ip);
+        } else if (!ip) {
+            updateQRCode(null); // Use placeholder
         }
-    };
+    });
 }
 
 // Initialize on page load
 window.addEventListener('DOMContentLoaded', () => {
-    // Try to detect IP first
+    console.log('Page loaded, starting IP detection...');
+
+    // Try to detect IP
     detectLocalIP();
 
-    // Fallback to placeholder after 2 seconds if detection fails
+    // Fallback after 5 seconds if no IP detected
     setTimeout(() => {
         const urlDisplay = document.getElementById('connectionUrl');
         if (urlDisplay.textContent === 'Generating QR code...') {
-            updateQRCode(null);  // No IP detected, use placeholder
+            console.log('IP detection timeout, prompting for manual entry');
+            promptForIP();
         }
-    }, 2000);
+    }, 5000);
 });
