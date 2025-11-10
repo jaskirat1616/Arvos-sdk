@@ -91,13 +91,27 @@ asyncio.run(main())
 python examples/save_to_csv.py
 ```
 
-### 3. Live Visualization
+### 3. Real-Time 3D Point Cloud (DepthEye Style!)
+
+**High-quality 3D LiDAR visualization with heatmap coloring:**
+
+```bash
+python examples/deptheye_style_viewer.py
+```
+
+Professional point cloud viewer with:
+- Depth-based heatmap coloring (blue=close, red=far)
+- Smooth 60 FPS rendering
+- Interactive camera controls
+- Industrial aesthetic like DepthEye app
+
+### 4. Live Visualization
 
 ```python
 python examples/live_visualization.py
 ```
 
-### 4. ROS 2 Bridge
+### 5. ROS 2 Bridge
 
 ```bash
 python examples/ros2_bridge.py
