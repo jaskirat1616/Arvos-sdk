@@ -12,10 +12,8 @@ function getLocalIP() {
 
 function generateConnectionURL() {
     const port = document.getElementById('customPort').value || '8765';
-    const ip = getLocalIP();
-
-    // ARVOS connection format: arvos://HOST:PORT
-    const url = `arvos://${ip}:${port}`;
+    // Always show placeholder in display text
+    const url = `arvos://YOUR_COMPUTER_IP:${port}`;
     return url;
 }
 
@@ -62,8 +60,64 @@ function goToViewer() {
 }
 
 function detectLocalIP() {
-    // Always use placeholder text as requested
-    updateQRCode();
+    // Detect actual IP for QR code, but show placeholder in text
+    const RTCPeerConnection = window.RTCPeerConnection ||
+                               window.webkitRTCPeerConnection ||
+                               window.mozRTCPeerConnection;
+
+    if (!RTCPeerConnection) {
+        updateQRCode();
+        return;
+    }
+
+    const pc = new RTCPeerConnection({iceServers: []});
+    pc.createDataChannel('');
+
+    pc.createOffer().then(offer => pc.setLocalDescription(offer));
+
+    pc.onicecandidate = (ice) => {
+        if (!ice || !ice.candidate || !ice.candidate.candidate) {
+            pc.close();
+            return;
+        }
+
+        const candidate = ice.candidate.candidate;
+        const ipRegex = /([0-9]{1,3}\.){3}[0-9]{1,3}/;
+        const match = ipRegex.exec(candidate);
+
+        if (match) {
+            const detectedIP = match[0];
+            const port = document.getElementById('customPort').value || '8765';
+
+            // QR code uses actual IP
+            const qrURL = `arvos://${detectedIP}:${port}`;
+
+            // Display shows placeholder
+            const displayURL = `arvos://YOUR_COMPUTER_IP:${port}`;
+
+            const qrcodeContainer = document.getElementById('qrcode');
+            const urlDisplay = document.getElementById('connectionUrl');
+
+            // Clear and regenerate QR with actual IP
+            qrcodeContainer.innerHTML = '';
+
+            if (typeof QRCode !== 'undefined') {
+                new QRCode(qrcodeContainer, {
+                    text: qrURL,  // Actual IP in QR code
+                    width: 256,
+                    height: 256,
+                    colorDark: '#000000',
+                    colorLight: '#ffffff',
+                    correctLevel: QRCode.CorrectLevel.M
+                });
+            }
+
+            // Show placeholder text to user
+            urlDisplay.textContent = displayURL;
+            urlDisplay.style.color = '#888';
+            pc.close();
+        }
+    };
 }
 
 // Initialize on page load
