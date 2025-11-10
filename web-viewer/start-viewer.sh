@@ -26,19 +26,22 @@ echo "   2. Go to Stream tab"
 echo "   3. Tap 'Connect to Server'"
 echo "   4. Scan QR code from browser"
 echo ""
-echo "🌐 Opening browser at: http://localhost:$PORT"
+echo "🌐 Opening browser at: http://$LOCAL_IP:$PORT"
+echo ""
+echo "⚠️  IMPORTANT: Use the IP address in your browser, not localhost!"
+echo "   This allows automatic QR code generation."
 echo ""
 
-# Try to open browser automatically
+# Try to open browser automatically with IP address
 if command -v open &> /dev/null; then
     # macOS
-    sleep 2 && open "http://localhost:$PORT" &
+    sleep 2 && open "http://$LOCAL_IP:$PORT" &
 elif command -v xdg-open &> /dev/null; then
     # Linux
-    sleep 2 && xdg-open "http://localhost:$PORT" &
+    sleep 2 && xdg-open "http://$LOCAL_IP:$PORT" &
 elif command -v start &> /dev/null; then
     # Windows
-    sleep 2 && start "http://localhost:$PORT" &
+    sleep 2 && start "http://$LOCAL_IP:$PORT" &
 fi
 
 # Start server (try Python 3 first, then Python 2, then fail)
