@@ -217,7 +217,9 @@ function updatePoseViz() {
 }
 
 function connectWebSocket(port) {
-    const ws = new WebSocket(`ws://localhost:${port}`);
+    const host = window.location.hostname || 'localhost';
+    const ws = new WebSocket(`ws://${host}:${port}`);
+    ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
         updateStatus(true);
@@ -232,8 +234,13 @@ function connectWebSocket(port) {
 
     ws.onmessage = (event) => {
         try {
-            const data = JSON.parse(event.data);
-            handleData(data);
+            if (typeof event.data === 'string') {
+                const data = JSON.parse(event.data);
+                handleData(data);
+            } else {
+                // Handle binary data if needed
+                console.log('Binary data received');
+            }
         } catch (e) {
             console.error('Parse error:', e);
         }
@@ -265,10 +272,21 @@ function handleData(data) {
 }
 
 function updatePointCloud(data) {
-    if (!data.pointCloud || !data.pointCloud.points) return;
+    // Handle different data formats
+    let points = [];
 
-    const points = data.pointCloud.points;
+    if (data.pointCloud && data.pointCloud.points) {
+        points = data.pointCloud.points;
+    } else if (data.points) {
+        points = data.points;
+    } else if (Array.isArray(data)) {
+        points = data;
+    } else {
+        return;
+    }
+
     const numPoints = points.length;
+    if (numPoints === 0) return;
 
     document.getElementById('pointCount').textContent = numPoints.toLocaleString();
 
@@ -278,26 +296,41 @@ function updatePointCloud(data) {
 
     let minDepth = Infinity, maxDepth = -Infinity;
 
+    // Parse points - handle both array and object formats
     for (let i = 0; i < numPoints; i++) {
         const point = points[i];
-        positions[i * 3] = point[0];
-        positions[i * 3 + 1] = point[1];
-        positions[i * 3 + 2] = point[2];
+        let x, y, z;
 
-        const depth = Math.sqrt(point[0]**2 + point[1]**2 + point[2]**2);
+        if (Array.isArray(point)) {
+            x = point[0];
+            y = point[1];
+            z = point[2];
+        } else {
+            x = point.x || 0;
+            y = point.y || 0;
+            z = point.z || 0;
+        }
+
+        positions[i * 3] = x;
+        positions[i * 3 + 1] = y;
+        positions[i * 3 + 2] = z;
+
+        const depth = Math.sqrt(x*x + y*y + z*z);
         minDepth = Math.min(minDepth, depth);
         maxDepth = Math.max(maxDepth, depth);
     }
 
     document.getElementById('depthRange').textContent = `${maxDepth.toFixed(1)}m`;
 
-    // Color by depth (Tesla-style gradient)
+    // Color by depth (Tesla-style blue gradient)
     for (let i = 0; i < numPoints; i++) {
-        const point = points[i];
-        const depth = Math.sqrt(point[0]**2 + point[1]**2 + point[2]**2);
+        const x = positions[i * 3];
+        const y = positions[i * 3 + 1];
+        const z = positions[i * 3 + 2];
+        const depth = Math.sqrt(x*x + y*y + z*z);
         const normalized = (depth - minDepth) / (maxDepth - minDepth + 0.001);
 
-        // Blue -> Cyan -> Green gradient
+        // Blue -> Cyan -> Green gradient (close to far)
         if (normalized < 0.5) {
             const t = normalized * 2;
             colors[i * 3] = 0;

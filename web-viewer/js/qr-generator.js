@@ -62,57 +62,8 @@ function goToViewer() {
 }
 
 function detectLocalIP() {
-    // Try to detect local IP address for better UX
-    const RTCPeerConnection = window.RTCPeerConnection ||
-                               window.webkitRTCPeerConnection ||
-                               window.mozRTCPeerConnection;
-
-    if (!RTCPeerConnection) {
-        updateQRCode();
-        return;
-    }
-
-    const pc = new RTCPeerConnection({iceServers: []});
-    pc.createDataChannel('');
-
-    pc.createOffer().then(offer => pc.setLocalDescription(offer));
-
-    pc.onicecandidate = (ice) => {
-        if (!ice || !ice.candidate || !ice.candidate.candidate) {
-            pc.close();
-            return;
-        }
-
-        const candidate = ice.candidate.candidate;
-        const ipRegex = /([0-9]{1,3}\.){3}[0-9]{1,3}/;
-        const match = ipRegex.exec(candidate);
-
-        if (match) {
-            const detectedIP = match[0];
-            // Update the connection URL and regenerate QR
-            const qrcodeContainer = document.getElementById('qrcode');
-            const urlDisplay = document.getElementById('connectionUrl');
-            const port = document.getElementById('customPort').value || '8765';
-            const url = `arvos://${detectedIP}:${port}`;
-
-            // Clear and regenerate
-            qrcodeContainer.innerHTML = '';
-
-            if (typeof QRCode !== 'undefined') {
-                new QRCode(qrcodeContainer, {
-                    text: url,
-                    width: 256,
-                    height: 256,
-                    colorDark: '#000000',
-                    colorLight: '#ffffff',
-                    correctLevel: QRCode.CorrectLevel.M
-                });
-            }
-
-            urlDisplay.textContent = url;
-            pc.close();
-        }
-    };
+    // Always use placeholder text as requested
+    updateQRCode();
 }
 
 // Initialize on page load
