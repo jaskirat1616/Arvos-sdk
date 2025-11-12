@@ -31,6 +31,7 @@ Arvos SDK provides Python clients and servers to receive iPhone sensor data over
 - **IMU**: Accelerometer + gyroscope + gravity reference
 - **ARKit Pose**: 6DOF camera tracking with quality flags
 - **GPS**: Location data
+- **Apple Watch** *(optional)*: Wearable IMU, attitude, and motion activity data
 
 ## Installation
 
@@ -111,7 +112,21 @@ Professional point cloud viewer with:
 python examples/live_visualization.py
 ```
 
-### 5. ROS 2 Bridge
+### 5. Apple Watch Sensor Viewer
+
+**Stream wearable sensor data from Apple Watch:**
+
+```bash
+python examples/watch_sensor_viewer.py
+```
+
+Live viewer for Apple Watch sensors:
+- 50-100 Hz IMU (accelerometer + gyroscope + gravity)
+- Attitude (quaternion + Euler angles)
+- Motion activity classification (walking, running, cycling, vehicle, stationary)
+- Real-time statistics and visualization
+
+### 6. ROS 2 Bridge
 
 ```bash
 python examples/ros2_bridge.py
@@ -147,6 +162,9 @@ server = ArvosServer(host="0.0.0.0", port=9090)
 - `on_depth(frame)` - Depth frame received
 - `on_status(status)` - Status message received
 - `on_error(error, details)` - Error message received
+- `on_watch_imu(data)` - Apple Watch IMU data received
+- `on_watch_attitude(data)` - Apple Watch attitude data received
+- `on_watch_activity(data)` - Apple Watch motion activity received
 
 ### ArvosClient
 
@@ -252,7 +270,60 @@ class DepthFrame:
     to_point_cloud() -> Optional[np.ndarray]  # Parse PLY to (N, 6) array
 ```
 
+#### WatchIMUData
+```python
+@dataclass
+class WatchIMUData:
+    timestamp_ns: int
+    angular_velocity: Tuple[float, float, float]  # rad/s (x, y, z)
+    linear_acceleration: Tuple[float, float, float]  # m/s² (x, y, z)
+    gravity: Tuple[float, float, float]  # m/s² (x, y, z)
+
+    # Properties
+    timestamp_s: float
+    angular_velocity_array: np.ndarray
+    linear_acceleration_array: np.ndarray
+    gravity_array: np.ndarray
+```
+
+#### WatchAttitudeData
+```python
+@dataclass
+class WatchAttitudeData:
+    timestamp_ns: int
+    quaternion: Tuple[float, float, float, float]  # x, y, z, w
+    pitch: float  # radians
+    roll: float   # radians
+    yaw: float    # radians
+    reference_frame: str
+
+    # Properties
+    timestamp_s: float
+    quaternion_array: np.ndarray
+```
+
+#### WatchMotionActivityData
+```python
+@dataclass
+class WatchMotionActivityData:
+    timestamp_ns: int
+    state: str  # "walking", "running", "cycling", "vehicle", "stationary", "unknown"
+    confidence: float  # 0.0 - 1.0
+
+    # Properties
+    timestamp_s: float
+```
+
 ## Examples
+
+### Live Visualization with Rerun
+
+```bash
+pip install rerun-sdk pillow
+python examples/rerun_visualizer.py --port 9090
+```
+
+This launches the bundled `ArvosServer`, connects to a [Rerun](https://rerun.io/) viewer (spawning one locally by default), and logs every stream the SDK exposes—handshake metadata, IMU, GPS, pose, camera, depth, and Apple Watch sensors.
 
 ### Save Camera Frames
 
@@ -304,6 +375,41 @@ async def on_gps(data: GPSData):
     print(f"Position: {lat:.6f}, {lon:.6f}")
     print(f"Altitude: {data.altitude:.1f}m")
     print(f"Accuracy: ±{data.horizontal_accuracy:.1f}m")
+```
+
+### Apple Watch Sensors
+
+```python
+from arvos import ArvosServer
+from arvos.data_types import WatchIMUData, WatchAttitudeData, WatchMotionActivityData
+
+server = ArvosServer(port=9090)
+
+# Watch IMU data (50-100 Hz)
+async def on_watch_imu(data: WatchIMUData):
+    accel = data.linear_acceleration_array
+    gyro = data.angular_velocity_array
+
+    print(f"Watch IMU: accel={accel}, gyro={gyro}")
+
+# Watch attitude/pose
+async def on_watch_attitude(data: WatchAttitudeData):
+    import math
+    pitch_deg = math.degrees(data.pitch)
+    roll_deg = math.degrees(data.roll)
+    yaw_deg = math.degrees(data.yaw)
+
+    print(f"Watch Attitude: pitch={pitch_deg:.1f}°, roll={roll_deg:.1f}°, yaw={yaw_deg:.1f}°")
+
+# Watch motion activity classification
+async def on_watch_activity(data: WatchMotionActivityData):
+    print(f"Activity: {data.state} (confidence: {data.confidence:.1%})")
+
+server.on_watch_imu = on_watch_imu
+server.on_watch_attitude = on_watch_attitude
+server.on_watch_activity = on_watch_activity
+
+await server.start()
 ```
 
 ## Advanced Usage

@@ -8,6 +8,19 @@ The live camera view now includes three separate windows with optimized performa
 2. **3D Point Cloud Window** - Interactive 3D LiDAR/depth visualization (Open3D)
 3. **GPS Map Window** - Real-time GPS location on OpenStreetMap
 
+## New: Rerun Visualizer
+
+`examples/rerun_visualizer.py` streams every Arvos sensor into a [Rerun](https://rerun.io/) viewer for quick inspection without building custom UI components.
+
+### Quick start
+
+```bash
+pip install rerun-sdk pillow
+python examples/rerun_visualizer.py --port 9090
+```
+
+The script launches (or attaches to) a Rerun viewer, starts an `ArvosServer`, and logs handshake metadata, IMU, GPS, pose, camera, depth, and Apple Watch feeds in real time. Use `--viewer ws://host:port` to connect to an existing Rerun viewer instead of spawning one locally.
+
 ## Installation
 
 Install required dependencies:
