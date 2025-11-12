@@ -28,24 +28,44 @@ from arvos.data_types import IMUData, GPSData, PoseData, CameraFrame, DepthFrame
 import socket
 
 
+HOTSPOT_PREFIXES = {
+    "172.20.10.": "172.20.10.1",  # Common Wi-Fi hotspot range
+    "172.16.0.": "172.16.0.1",    # USB tethering (varies)
+    "172.16.2.": "172.16.2.1",    # Occasionally seen on macOS
+    "192.0.0.": "192.0.0.1",      # Some macOS/iOS hotspot setups
+}
+
+
+def _guess_gateway(ip: str) -> str:
+    parts = ip.split('.')
+    if len(parts) == 4:
+        parts[-1] = '1'
+        return '.'.join(parts)
+    return ip
+
+
 def get_hotspot_info():
-    """
-    Detect if connected to iPhone hotspot and get network info.
-    
-    Returns:
-        tuple: (is_hotspot, iphone_ip, computer_ip)
-    """
+    """Detect if connected to iPhone hotspot and return connection details."""
     try:
         # Get computer's IP
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         computer_ip = s.getsockname()[0]
         s.close()
-        
-        # Check if IP is in hotspot range (172.20.10.x)
-        is_hotspot = computer_ip.startswith("172.20.10.")
-        iphone_ip = "172.20.10.1" if is_hotspot else None
-        
+
+        iphone_ip = None
+        is_hotspot = False
+
+        for prefix, default_gateway in HOTSPOT_PREFIXES.items():
+            if computer_ip.startswith(prefix):
+                is_hotspot = True
+                # Prefer dynamic gateway guess in case the last octet differs
+                iphone_ip = _guess_gateway(computer_ip)
+                # Fallback to known default if guess fails
+                if iphone_ip == computer_ip:
+                    iphone_ip = default_gateway
+                break
+
         return is_hotspot, iphone_ip, computer_ip
     except Exception as e:
         print(f"Error detecting hotspot: {e}")
@@ -71,7 +91,7 @@ def print_connection_info():
         print(f"\nYour computer IP: {computer_ip}")
         print("\nTo use Direct WiFi Connection:")
         print("1. Enable Personal Hotspot on iPhone")
-        print("2. Connect your computer to iPhone's hotspot")
+        print("2. Connect your computer to iPhone's hotspot (look for IP ranges like 172.20.10.x or 192.0.0.x)")
         print("3. Run this script again")
         print("\nContinuing with regular WiFi connection...")
     
