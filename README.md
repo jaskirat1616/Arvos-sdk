@@ -25,13 +25,66 @@ Then scan the QR code with your iPhone. [→ Full Instructions](web-viewer/READM
 
 ## Overview
 
-Arvos SDK provides Python clients and servers to receive iPhone sensor data over WebSocket, including:
+Arvos SDK provides Python clients and servers to receive iPhone sensor data over multiple protocols, including:
 - **Camera**: RGB video (JPEG compressed)
 - **LiDAR/Depth**: 3D point clouds with confidence maps
 - **IMU**: Accelerometer + gyroscope + gravity reference
 - **ARKit Pose**: 6DOF camera tracking with quality flags
 - **GPS**: Location data
 - **Apple Watch** *(optional)*: Wearable IMU, attitude, and motion activity data
+
+## 🚀 Supported Protocols
+
+ARVOS supports **7 streaming protocols** to fit different use cases:
+
+| Protocol | Best For | Default Port | Status |
+|----------|----------|--------------|--------|
+| **WebSocket** | General purpose, default | 9090 | ✅ Complete |
+| **gRPC** | High performance, research | 50051 | ✅ Complete (iOS 18+) |
+| **MQTT** | IoT, multi-subscriber | 1883 | ✅ Complete |
+| **HTTP/REST** | Simple integration, webhooks | 8080 | ✅ Complete |
+| **Bluetooth LE** | Low bandwidth, cable-free | N/A | ✅ Complete |
+| **MCAP Stream** | Robotics research, Foxglove | 17500 | ✅ Complete |
+| **QUIC/HTTP3** | Ultra-low latency | 4433 | 🚧 Coming Soon |
+
+### Protocol Selection Guide
+
+**WebSocket** (Default)
+- ✅ Works everywhere
+- ✅ Bidirectional communication
+- ✅ Good for most use cases
+- Example: `python examples/basic_server.py`
+
+**gRPC**
+- ✅ Industry standard for research
+- ✅ Protocol Buffers (efficient)
+- ✅ Bidirectional streaming
+- ⚠️ Requires iOS 18+
+- Example: `python examples/grpc_stream_server.py`
+
+**MQTT**
+- ✅ Multi-subscriber support
+- ✅ IoT-friendly
+- ✅ Requires MQTT broker (Mosquitto)
+- Example: `python examples/mqtt_stream_server.py`
+
+**HTTP/REST**
+- ✅ Simple POST requests
+- ✅ Easy webhook integration
+- ✅ Works with any HTTP client
+- Example: `python examples/http_stream_server.py`
+
+**Bluetooth LE**
+- ✅ No Wi-Fi needed
+- ✅ Low power
+- ⚠️ Low bandwidth (telemetry only)
+- Example: `python examples/ble_receiver.py`
+
+**MCAP Stream**
+- ✅ Robotics standard format
+- ✅ Foxglove Studio compatible
+- ✅ Streaming MCAP files
+- Example: `python examples/mcap_stream_server.py`
 
 ## Installation
 
@@ -63,7 +116,7 @@ pip install -e ".[dev]"
 
 ## Quick Start
 
-### 1. Basic Server
+### 1. Basic WebSocket Server
 
 ```python
 import asyncio
@@ -86,13 +139,101 @@ async def main():
 asyncio.run(main())
 ```
 
-### 2. Save to CSV
+### 2. gRPC Server
+
+```python
+import asyncio
+from arvos.servers import GRPCArvosServer
+
+async def main():
+    server = GRPCArvosServer(host="0.0.0.0", port=50051)
+    
+    def on_imu(data):
+        print(f"IMU: {data.angular_velocity}")
+    
+    server.on_imu = on_imu
+    await server.start()
+
+asyncio.run(main())
+```
+
+### 3. MQTT Server
+
+**First, start MQTT broker:**
+```bash
+mosquitto -c mosquitto.conf
+```
+
+**Then run the server:**
+```python
+import asyncio
+from arvos.servers import MQTTArvosServer
+
+async def main():
+    server = MQTTArvosServer(host="localhost", port=1883)
+    
+    def on_imu(data):
+        print(f"IMU: {data.angular_velocity}")
+    
+    server.on_imu = on_imu
+    await server.start()
+
+asyncio.run(main())
+```
+
+### 4. HTTP Server
+
+```python
+import asyncio
+from arvos.servers import HTTPArvosServer
+
+async def main():
+    server = HTTPArvosServer(port=8080)
+    
+    def on_imu(data):
+        print(f"IMU: {data.angular_velocity}")
+    
+    server.on_imu = on_imu
+    await server.start()
+
+asyncio.run(main())
+```
+
+### 5. BLE Receiver
+
+```python
+import asyncio
+from arvos.examples.ble_receiver import main
+
+# Run the BLE receiver example
+asyncio.run(main())
+```
+
+### 6. MCAP Stream Server
+
+```python
+import asyncio
+from arvos.servers import MCAPStreamServer
+
+async def main():
+    server = MCAPStreamServer(host="0.0.0.0", port=17500, output_file="output.mcap")
+    
+    def on_imu(data):
+        print(f"IMU: {data.angular_velocity}")
+    
+    server.on_imu = on_imu
+    await server.start()
+
+asyncio.run(main())
+```
+
+### 7. Save to CSV
 
 ```python
 python examples/save_to_csv.py
 ```
 
-### 3. Real-Time 3D Point Cloud (DepthEye Style!)
+### 8. Real-Time 3D Point Cloud (DepthEye Style!)
 
 **High-quality 3D LiDAR visualization with heatmap coloring:**
 
@@ -106,13 +247,13 @@ Professional point cloud viewer with:
 - Interactive camera controls
 - Industrial aesthetic like DepthEye app
 
-### 4. Live Visualization
+### 9. Live Visualization
 
 ```python
 python examples/live_visualization.py
 ```
 
-### 5. Apple Watch Sensor Viewer
+### 10. Apple Watch Sensor Viewer
 
 **Stream wearable sensor data from Apple Watch:**
 
@@ -126,7 +267,7 @@ Live viewer for Apple Watch sensors:
 - Motion activity classification (walking, running, cycling, vehicle, stationary)
 - Real-time statistics and visualization
 
-### 6. ROS 2 Bridge
+### 11. ROS 2 Bridge
 
 ```bash
 python examples/ros2_bridge.py
@@ -134,7 +275,7 @@ python examples/ros2_bridge.py
 
 ## API Reference
 
-### ArvosServer
+### ArvosServer (WebSocket)
 
 Main server class for receiving connections from Arvos app.
 
@@ -165,6 +306,24 @@ server = ArvosServer(host="0.0.0.0", port=9090)
 - `on_watch_imu(data)` - Apple Watch IMU data received
 - `on_watch_attitude(data)` - Apple Watch attitude data received
 - `on_watch_activity(data)` - Apple Watch motion activity received
+
+### Protocol-Specific Servers
+
+All protocol servers inherit from `BaseArvosServer` and share the same callback interface:
+
+```python
+from arvos.servers import (
+    GRPCArvosServer,
+    MQTTArvosServer,
+    HTTPArvosServer,
+    MCAPStreamServer
+)
+
+# All servers have the same callback interface
+server = GRPCArvosServer(port=50051)
+server.on_imu = lambda data: print(f"IMU: {data}")
+await server.start()
+```
 
 ### ArvosClient
 
