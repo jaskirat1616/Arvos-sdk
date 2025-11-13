@@ -19,7 +19,7 @@ Then:
 3. Tap "CONNECT TO SERVER"
 4. Tap "START" to stream
 
-[→ Full Web Viewer Guide](web-viewer/quick-start.md)
+[→ Full Web Viewer Guide](../web-viewer/quick-start.md)
 
 ---
 

@@ -41,5 +41,5 @@ Then scan the QR code with your iPhone!
 ## Next Steps
 
 - [Quick Start](quick-start.md) - Get started in 30 seconds
-- [Web Viewer README](../../web-viewer/README.md) - Full documentation
+- [Web Viewer Quick Start](quick-start.md) - Get started in 30 seconds
 
