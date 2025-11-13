@@ -45,7 +45,7 @@ ARVOS supports **7 streaming protocols** to fit different use cases:
 | **HTTP/REST** | Simple integration, webhooks | 8080 | ✅ Complete |
 | **Bluetooth LE** | Low bandwidth, cable-free | N/A | ✅ Complete |
 | **MCAP Stream** | Robotics research, Foxglove | 17500 | ✅ Complete |
-| **QUIC/HTTP3** | Ultra-low latency | 4433 | 🚧 Coming Soon |
+| **QUIC/HTTP3** | Ultra-low latency | 4433 | ✅ Complete (iOS 15+) |
 
 ### Protocol Selection Guide
 
@@ -86,20 +86,61 @@ ARVOS supports **7 streaming protocols** to fit different use cases:
 - ✅ Streaming MCAP files
 - Example: `python examples/mcap_stream_server.py`
 
+**QUIC/HTTP3**
+- ✅ Ultra-low latency
+- ✅ Better performance on unstable networks
+- ✅ Built-in encryption (TLS required)
+- ⚠️ Requires TLS certificates
+- ⚠️ Requires aioquic library
+- Example: `python examples/quic_stream_server.py`
+
 ## Installation
 
 Package available at: https://pypi.org/project/arvos-sdk/
 
 ### Basic Installation
 ```bash
-pip install -r requirements.txt
+pip install arvos-sdk
 ```
 
-### From Source
+Or from source:
 ```bash
 git clone https://github.com/jaskirat1616/arvos-sdk.git
 cd arvos-sdk
 pip install -e .
+```
+
+### Protocol-Specific Dependencies
+
+**Core (WebSocket):**
+```bash
+pip install arvos-sdk  # Includes websockets, qrcode, numpy
+```
+
+**gRPC:**
+```bash
+pip install grpcio grpcio-tools protobuf
+```
+
+**MQTT:**
+```bash
+pip install paho-mqtt
+# Also install Mosquitto broker: brew install mosquitto (Mac) or apt-get install mosquitto (Linux)
+```
+
+**Bluetooth LE:**
+```bash
+pip install bleak
+```
+
+**MCAP Stream:**
+```bash
+pip install mcap
+```
+
+**QUIC/HTTP3:**
+```bash
+pip install aioquic
 ```
 
 ### With Optional Dependencies
@@ -109,6 +150,9 @@ pip install -e ".[visualization]"
 
 # For image processing
 pip install -e ".[image]"
+
+# For ROS 2 integration
+pip install -e ".[ros2]"
 
 # For development
 pip install -e ".[dev]"
@@ -227,13 +271,45 @@ async def main():
 asyncio.run(main())
 ```
 
-### 7. Save to CSV
+### 7. QUIC/HTTP3 Server
+
+**First, generate TLS certificates:**
+```bash
+openssl req -x509 -newkey rsa:2048 -keyout /tmp/arvos-quic.key \
+    -out /tmp/arvos-quic-cert.pem -days 365 -nodes
+```
+
+**Then run the server:**
+```python
+import asyncio
+from arvos.servers import QUICArvosServer
+
+async def main():
+    server = QUICArvosServer(
+        host="0.0.0.0",
+        port=4433,
+        certfile="/tmp/arvos-quic-cert.pem",
+        keyfile="/tmp/arvos-quic.key"
+    )
+    
+    def on_imu(data):
+        print(f"IMU: {data.angular_velocity}")
+    
+    server.on_imu = on_imu
+    await server.start()
+
+asyncio.run(main())
+```
+
+**Note:** For local testing, you may need to install the self-signed certificate on your iPhone.
+
+### 8. Save to CSV
 
 ```python
 python examples/save_to_csv.py
 ```
 
-### 8. Real-Time 3D Point Cloud (DepthEye Style!)
+### 9. Real-Time 3D Point Cloud (DepthEye Style!)
 
 **High-quality 3D LiDAR visualization with heatmap coloring:**
 
@@ -247,13 +323,13 @@ Professional point cloud viewer with:
 - Interactive camera controls
 - Industrial aesthetic like DepthEye app
 
-### 9. Live Visualization
+### 10. Live Visualization
 
 ```python
 python examples/live_visualization.py
 ```
 
-### 10. Apple Watch Sensor Viewer
+### 11. Apple Watch Sensor Viewer
 
 **Stream wearable sensor data from Apple Watch:**
 
@@ -267,7 +343,7 @@ Live viewer for Apple Watch sensors:
 - Motion activity classification (walking, running, cycling, vehicle, stationary)
 - Real-time statistics and visualization
 
-### 11. ROS 2 Bridge
+### 12. ROS 2 Bridge
 
 ```bash
 python examples/ros2_bridge.py
@@ -316,7 +392,8 @@ from arvos.servers import (
     GRPCArvosServer,
     MQTTArvosServer,
     HTTPArvosServer,
-    MCAPStreamServer
+    MCAPStreamServer,
+    QUICArvosServer  # Requires aioquic
 )
 
 # All servers have the same callback interface
@@ -716,13 +793,42 @@ pytest --cov=arvos tests/
 
 **Problem**: Can't connect from iPhone
 - Ensure both devices on same Wi-Fi network
-- Check firewall settings (allow port 9090)
-- Try: `nc -l 9090` to test port
+- Check firewall settings (allow the protocol's port)
+- Try: `nc -l <port>` to test port connectivity
+- Verify the correct protocol is selected in the iOS app
 
 **Problem**: QR code not scanning
 - Increase terminal font size
 - Use manual IP entry instead
-- Check QR code contains correct IP
+- Check QR code contains correct IP and port
+
+**Problem**: Protocol-specific connection failures
+
+**gRPC:**
+- Ensure iOS 18+ is installed
+- Check that port 50051 is not blocked
+- Verify protobuf code is generated correctly
+
+**MQTT:**
+- Ensure Mosquitto broker is running: `mosquitto -c mosquitto.conf`
+- Check broker is listening on all interfaces (not just localhost)
+- Verify broker port (default 1883) is accessible
+
+**HTTP/REST:**
+- Use the Mac's actual LAN IP (not 0.0.0.0)
+- Check App Transport Security settings in iOS app
+- Verify firewall allows port 8080
+
+**Bluetooth LE:**
+- Ensure Bluetooth is enabled on both devices
+- Check that the iOS app is advertising (BLE toggle enabled)
+- Verify Python script can access Bluetooth (may need permissions)
+
+**QUIC/HTTP3:**
+- Generate and install TLS certificates
+- Ensure aioquic is installed: `pip install aioquic`
+- For local testing, install self-signed certificate on iPhone
+- Verify port 4433 is not blocked
 
 ### Performance Issues
 
@@ -730,11 +836,56 @@ pytest --cov=arvos tests/
 - Reduce sensor rates in iPhone app settings
 - Check Wi-Fi signal strength
 - Use wired connection for computer
+- Try QUIC/HTTP3 for better performance on unstable networks
+- Use gRPC for high-performance scenarios
 
 **Problem**: High CPU usage
 - Process frames asynchronously
 - Downsample point clouds
 - Skip processing some frames
+- Use HTTP/REST for simple telemetry (not video)
+
+**Problem**: Low bandwidth (BLE)
+- BLE is designed for telemetry only
+- Camera/depth frames are automatically dropped
+- Use Wi-Fi protocols for high-bandwidth data
+
+### Protocol Selection Guide
+
+**When to use WebSocket:**
+- General purpose, default choice
+- Works everywhere
+- Good balance of features and compatibility
+
+**When to use gRPC:**
+- Research applications requiring high performance
+- Need Protocol Buffers efficiency
+- iOS 18+ available
+
+**When to use MQTT:**
+- Multiple subscribers needed
+- IoT deployments
+- Broker-based architecture preferred
+
+**When to use HTTP/REST:**
+- Simple webhook integrations
+- REST API compatibility needed
+- Easy debugging with standard HTTP tools
+
+**When to use Bluetooth LE:**
+- No Wi-Fi available
+- Low power requirements
+- Telemetry-only use cases
+
+**When to use MCAP Stream:**
+- Robotics research
+- Foxglove Studio integration
+- Standardized data format needed
+
+**When to use QUIC/HTTP3:**
+- Ultra-low latency requirements
+- Unstable network conditions
+- Mobile network scenarios
 
 ## Contributing
 
@@ -744,9 +895,32 @@ Contributions welcome! Please:
 3. Add tests for new features
 4. Submit a pull request
 
+## Dependencies
+
+### Core Dependencies
+- `websockets>=11.0` - WebSocket support
+- `qrcode[pil]>=7.4` - QR code generation
+- `numpy>=1.20.0` - Numerical operations
+
+### Protocol-Specific Dependencies
+- `grpcio>=1.50.0` - gRPC support
+- `grpcio-tools>=1.50.0` - gRPC code generation
+- `protobuf>=4.21.0` - Protocol Buffers
+- `paho-mqtt>=1.6.0` - MQTT client
+- `bleak>=0.20.0` - Bluetooth LE support
+- `mcap>=0.1.0` - MCAP format support
+- `aioquic>=0.9.0` - QUIC/HTTP3 support
+
+### Optional Dependencies
+- `matplotlib>=3.5.0` - Visualization
+- `Pillow>=9.0.0` - Image processing
+- `opencv-python>=4.5.0` - Computer vision
+- `rclpy` - ROS 2 integration
+- `cv_bridge` - ROS 2 image bridge
+
 ## License
 
-[Add your license here]
+MIT License - See LICENSE file for details
 
 ## Related Projects
 
@@ -758,6 +932,46 @@ Contributions welcome! Please:
 
 - GitHub Issues: https://github.com/jaskirat1616/arvos-sdk/issues
 - Documentation: https://github.com/jaskirat1616/arvos-sdk/docs
+
+## Quick Reference
+
+### Protocol Comparison
+
+| Feature | WebSocket | gRPC | MQTT | HTTP | BLE | MCAP | QUIC |
+|--------|-----------|------|------|------|-----|------|------|
+| **Latency** | Low | Very Low | Medium | Medium | Low | Low | Very Low |
+| **Throughput** | High | Very High | Medium | Medium | Low | High | Very Low |
+| **Bidirectional** | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| **Multi-client** | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| **iOS Version** | 16+ | 18+ | 16+ | 16+ | 16+ | 16+ | 15+ |
+| **Setup Complexity** | Low | Medium | Medium | Low | Low | Low | High |
+| **Best For** | General | Research | IoT | Webhooks | Cable-free | Robotics | Mobile |
+
+### Example Commands
+
+```bash
+# WebSocket (default)
+python examples/basic_server.py
+
+# gRPC
+python examples/grpc_stream_server.py
+
+# MQTT (requires broker)
+mosquitto -c mosquitto.conf &
+python examples/mqtt_stream_server.py
+
+# HTTP
+python examples/http_stream_server.py
+
+# BLE
+python examples/ble_receiver.py
+
+# MCAP
+python examples/mcap_stream_server.py
+
+# QUIC/HTTP3
+python examples/quic_stream_server.py
+```
 
 ---
 
