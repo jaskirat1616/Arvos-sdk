@@ -1,46 +1,45 @@
 """
-QUIC/HTTP3 server for receiving sensor data from ARVOS iOS app.
+QUIC/HTTP3 server for receiving sensor data from ARVOS iOS app
 """
-
-from __future__ import annotations
 
 import asyncio
 import json
 import ssl
 from pathlib import Path
-from typing import Optional, Callable, Any
+from typing import Optional, Tuple
 
 try:
-    from aioquic.asyncio import serve
-    from aioquic.h3.connection import H3_ALPN
-    from aioquic.h3.events import (
-        DataReceived,
-        H3Event,
-        HeadersReceived,
-        StreamReset,
-    )
+    from aioquic.asyncio.server import QuicConnectionProtocol, serve
     from aioquic.quic.configuration import QuicConfiguration
-    from aioquic.quic.connection import QuicConnection
-    from aioquic.h3.server import H3Connection
-    from aioquic.tls import SessionTicket
+    from aioquic.h3.connection import H3Connection
+    from aioquic.h3.events import DataReceived, HeadersReceived
     AIOQUIC_AVAILABLE = True
 except ImportError:
     AIOQUIC_AVAILABLE = False
+    QuicConnectionProtocol = object
+    serve = None
+    QuicConfiguration = object
+    H3Connection = object
+    DataReceived = object
+    HeadersReceived = object
 
 from .base_server import BaseArvosServer
 from ..client import ArvosClient
 
+# ALPN for HTTP/3
+H3_ALPN = ["h3-29", "h3-28", "h3-27", "h3"]
+
 
 class Http3RequestHandler:
-    """HTTP/3 request handler for aioquic."""
+    """Handles HTTP/3 requests"""
     
-    def __init__(self, base_server: QUICArvosServer):
+    def __init__(self, base_server: 'QUICArvosServer'):
         self.base_server = base_server
         self.parser = ArvosClient()
         self._configure_callbacks()
     
     def _configure_callbacks(self):
-        """Configure parser callbacks to forward to base server."""
+        """Configure parser callbacks"""
         self.parser.on_handshake = self.base_server.on_handshake
         self.parser.on_imu = self.base_server.on_imu
         self.parser.on_gps = self.base_server.on_gps
@@ -53,218 +52,172 @@ class Http3RequestHandler:
         self.parser.on_watch_attitude = self.base_server.on_watch_attitude
         self.parser.on_watch_activity = self.base_server.on_watch_activity
     
-    async def handle_request(
-        self,
-        h3_connection: H3Connection,
-        stream_id: int,
-        headers: list[tuple[bytes, bytes]],
-        data: bytes,
-    ):
-        """Handle HTTP/3 request."""
-        # Parse headers
-        headers_dict = {k.decode(): v.decode() for k, v in headers}
-        method = headers_dict.get(":method", "GET")
-        path = headers_dict.get(":path", "/")
+    async def handle_request(self, h3_connection: H3Connection, stream_id: int, 
+                            request_headers: dict, request_data: bytes):
+        """Handle HTTP/3 request"""
+        method = request_headers.get(b":method", b"GET").decode()
+        path = request_headers.get(b":path", b"/").decode()
         
-        client_id = headers_dict.get(":authority", "unknown")
+        client_id = f"{self.base_server.host}:{self.base_server.port}"
+        await self.base_server._invoke_callback(self.base_server.on_connect, client_id)
+        self.base_server.connected_clients += 1
         
-        # Handle different endpoints
-        if path == "/api/health":
-            # Health check
-            response_headers = [
-                (b":status", b"200"),
-                (b"content-type", b"application/json"),
-                (b"alt-svc", b'h3=":4433"'),  # Advertise HTTP/3 support
-            ]
-            response_data = json.dumps({"status": "ok", "protocol": "HTTP/3"}).encode()
-            h3_connection.send_headers(stream_id, response_headers)
-            h3_connection.send_data(stream_id, response_data, end_stream=True)
+        try:
+            if path == "/api/health":
+                response_headers = [
+                    (b":status", b"200"),
+                    (b"content-type", b"application/json"),
+                ]
+                response_data = json.dumps({"status": "ok", "protocol": "QUIC/HTTP3"}).encode()
+                h3_connection.send_headers(stream_id, response_headers)
+                h3_connection.send_data(stream_id, response_data, end_stream=True)
             
-        elif path == "/api/telemetry" and method == "POST":
-            # JSON telemetry data
-            if self.base_server.on_connect:
+            elif path == "/api/telemetry" and method == "POST":
+                self.base_server.messages_received += 1
+                self.base_server.bytes_received += len(request_data)
+                
                 try:
-                    if asyncio.iscoroutinefunction(self.base_server.on_connect):
-                        await self.base_server.on_connect(client_id)
-                    else:
-                        self.base_server.on_connect(client_id)
+                    message_str = request_data.decode('utf-8')
+                    await self.parser._handle_json_message(message_str)
                 except Exception as e:
-                    print(f"Error in on_connect callback: {e}")
+                    if self.base_server.on_error:
+                        await self.base_server._invoke_callback(
+                            self.base_server.on_error, str(e), None, None
+                        )
+                
+                response_headers = [
+                    (b":status", b"200"),
+                    (b"content-type", b"application/json"),
+                ]
+                response_data = json.dumps({"status": "ok"}).encode()
+                h3_connection.send_headers(stream_id, response_headers)
+                h3_connection.send_data(stream_id, response_data, end_stream=True)
             
-            self.base_server.connected_clients += 1
-            self.base_server.messages_received += 1
-            self.base_server.bytes_received += len(data)
-            
-            # Parse JSON and dispatch
-            try:
-                if data:
-                    json_str = data.decode("utf-8")
-                    asyncio.create_task(self.parser._handle_message(json_str))
-            except Exception as e:
-                print(f"Error processing telemetry: {e}")
-                if self.base_server.on_error:
-                    try:
-                        if asyncio.iscoroutinefunction(self.base_server.on_error):
-                            await self.base_server.on_error(str(e), None)
-                        else:
-                            self.base_server.on_error(str(e), None)
-                    except Exception:
-                        pass
-            
-            # Send response
-            response_headers = [
-                (b":status", b"200"),
-                (b"content-type", b"application/json"),
-            ]
-            response_data = json.dumps({"status": "ok"}).encode()
-            h3_connection.send_headers(stream_id, response_headers)
-            h3_connection.send_data(stream_id, response_data, end_stream=True)
-            
-        elif path == "/api/binary" and method == "POST":
-            # Binary data (camera, depth)
-            if self.base_server.on_connect:
+            elif path == "/api/binary" and method == "POST":
+                self.base_server.messages_received += 1
+                self.base_server.bytes_received += len(request_data)
+                
                 try:
-                    if asyncio.iscoroutinefunction(self.base_server.on_connect):
-                        await self.base_server.on_connect(client_id)
-                    else:
-                        self.base_server.on_connect(client_id)
+                    await self.parser._handle_binary_message(request_data)
                 except Exception as e:
-                    print(f"Error in on_connect callback: {e}")
+                    if self.base_server.on_error:
+                        await self.base_server._invoke_callback(
+                            self.base_server.on_error, str(e), None, None
+                        )
+                
+                response_headers = [
+                    (b":status", b"200"),
+                    (b"content-type", b"application/json"),
+                ]
+                response_data = json.dumps({"status": "ok"}).encode()
+                h3_connection.send_headers(stream_id, response_headers)
+                h3_connection.send_data(stream_id, response_data, end_stream=True)
             
-            self.base_server.connected_clients += 1
-            self.base_server.messages_received += 1
-            self.base_server.bytes_received += len(data)
-            
-            # Handle binary data
-            try:
-                if data:
-                    asyncio.create_task(self.parser._handle_binary_message(data))
-            except Exception as e:
-                print(f"Error processing binary data: {e}")
-                if self.base_server.on_error:
-                    try:
-                        if asyncio.iscoroutinefunction(self.base_server.on_error):
-                            await self.base_server.on_error(str(e), None)
-                        else:
-                            self.base_server.on_error(str(e), None)
-                    except Exception:
-                        pass
-            
-            # Send response
-            response_headers = [
-                (b":status", b"200"),
-                (b"content-type", b"application/json"),
-            ]
-            response_data = json.dumps({"status": "ok"}).encode()
-            h3_connection.send_headers(stream_id, response_headers)
-            h3_connection.send_data(stream_id, response_data, end_stream=True)
-            
-        else:
-            # 404 Not Found
-            response_headers = [
-                (b":status", b"404"),
-                (b"content-type", b"text/plain"),
-            ]
-            response_data = b"Not Found"
-            h3_connection.send_headers(stream_id, response_headers)
-            h3_connection.send_data(stream_id, response_data, end_stream=True)
+            else:
+                response_headers = [
+                    (b":status", b"404"),
+                    (b"content-type", b"text/plain"),
+                ]
+                response_data = b"Not Found"
+                h3_connection.send_headers(stream_id, response_headers)
+                h3_connection.send_data(stream_id, response_data, end_stream=True)
+        
+        finally:
+            await self.base_server._invoke_callback(
+                self.base_server.on_disconnect, client_id
+            )
+            self.base_server.connected_clients -= 1
 
 
 class QUICArvosServer(BaseArvosServer):
-    """QUIC/HTTP3 server for receiving sensor data from ARVOS iOS app."""
+    """QUIC/HTTP3 server for receiving sensor data"""
     
-    def __init__(self, host: str = "0.0.0.0", port: int = 4433, certfile: Optional[str] = None, keyfile: Optional[str] = None):
-        super().__init__(host=host, port=port)
-        self.certfile = certfile or self._generate_self_signed_cert()
-        self.keyfile = keyfile or self.certfile.replace(".pem", ".key")
-        self._server: Optional[Any] = None
+    def __init__(self, host: str = "0.0.0.0", port: int = 4433,
+                 certfile: Optional[str] = None, keyfile: Optional[str] = None):
+        super().__init__(host, port)
+        self.certfile = certfile or "/tmp/arvos-quic-cert.pem"
+        self.keyfile = keyfile or "/tmp/arvos-quic-key.pem"
+        self._server_task: Optional[asyncio.Task] = None
         self._handler: Optional[Http3RequestHandler] = None
     
-    def _generate_self_signed_cert(self) -> str:
-        """Generate self-signed certificate for local development."""
-        # For production, use proper certificates
-        # For now, return a placeholder path
-        cert_path = Path("/tmp/arvos-quic-cert.pem")
-        if not cert_path.exists():
-            print("⚠️  QUIC/HTTP3 requires TLS certificates.")
-            print("   For local development, generate self-signed certs:")
-            print("   openssl req -x509 -newkey rsa:2048 -keyout /tmp/arvos-quic.key -out /tmp/arvos-quic-cert.pem -days 365 -nodes")
-            print("   Then pass certfile='/tmp/arvos-quic-cert.pem' and keyfile='/tmp/arvos-quic.key' to QUICArvosServer")
-        return str(cert_path)
+    def _generate_self_signed_cert(self):
+        """Generate self-signed certificate for local development"""
+        cert_path = Path(self.certfile)
+        key_path = Path(self.keyfile)
+        
+        if not cert_path.exists() or not key_path.exists():
+            print("⚠️  Generating self-signed certificates for QUIC/HTTP3...")
+            import subprocess
+            subprocess.run([
+                "openssl", "req", "-x509", "-newkey", "rsa:2048",
+                "-keyout", str(key_path),
+                "-out", str(cert_path),
+                "-days", "365", "-nodes", "-subj", "/CN=localhost"
+            ], check=True, capture_output=True)
+            print(f"✅ Generated: {cert_path}")
     
     async def start(self):
-        """Start the QUIC/HTTP3 server."""
+        """Start the QUIC/HTTP3 server"""
         if not AIOQUIC_AVAILABLE:
             raise ImportError(
                 "aioquic is required for QUIC/HTTP3 support. "
                 "Install it with: pip install aioquic"
             )
         
-        self.running = True
-        self.print_connection_info()
-        
-        # Create handler
+        self._generate_self_signed_cert()
         self._handler = Http3RequestHandler(self)
         
-        # Load SSL certificate
+        # Load SSL context
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        try:
-            ssl_context.load_cert_chain(self.certfile, self.keyfile)
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"Certificate file not found: {self.certfile}\n"
-                "Generate self-signed certificate with:\n"
-                "openssl req -x509 -newkey rsa:2048 -keyout /tmp/arvos-quic.key "
-                "-out /tmp/arvos-quic-cert.pem -days 365 -nodes"
-            )
+        ssl_context.load_cert_chain(self.certfile, self.keyfile)
         
         # Configure QUIC
         quic_config = QuicConfiguration(
             alpn_protocols=H3_ALPN,
             is_client=False,
-            max_datagram_frame_size=65536,
+            max_datagram_frame_size=65536
         )
-        quic_config.load_cert_chain(self.certfile, self.keyfile)
         
-        # Create connection handler
-        async def handle_connection(reader, writer):
-            """Handle new QUIC connection."""
-            # This is a simplified handler - aioquic's serve() handles the actual QUIC protocol
-            pass
+        self._server_task = asyncio.create_task(
+            serve(self.host, self.port, configuration=quic_config,
+                  create_protocol=self._create_protocol)
+        )
         
-        # Start server
-        print(f"✅ QUIC/HTTP3 server started on {self.host}:{self.port}")
-        print("Listening for sensor data... Press Ctrl+C to stop.\n")
-        print("⚠️  Note: iOS requires valid TLS certificates for HTTP/3.")
-        print("   For local testing, you may need to install the self-signed certificate on your iPhone.\n")
+        self.running = True
+        self.print_connection_info()
+        print("✅ QUIC/HTTP3 server started. Waiting for connections...")
+        print("⚠️  Note: iOS requires valid TLS certificates for HTTP/3")
+        print("Press Ctrl+C to stop.\n")
         
-        # Use aioquic's serve function
-        # Note: This is a simplified implementation
-        # Full implementation would require more complex connection handling
         try:
-            await asyncio.Event().wait()  # Wait indefinitely
+            await asyncio.Future()
         except asyncio.CancelledError:
             pass
     
+    def _create_protocol(self, *args, **kwargs) -> QuicConnectionProtocol:
+        """Factory for QUIC connection protocols"""
+        # Simplified - full implementation would handle HTTP/3 events properly
+        protocol = QuicConnectionProtocol(*args, **kwargs)
+        # Add HTTP/3 handling here
+        return protocol
+    
     async def stop(self):
-        """Stop the QUIC/HTTP3 server."""
+        """Stop the QUIC/HTTP3 server"""
         self.running = False
-        if self._server:
-            # Close server
-            pass
+        if self._server_task:
+            self._server_task.cancel()
+            try:
+                await self._server_task
+            except asyncio.CancelledError:
+                pass
         print("QUIC/HTTP3 server stopped")
     
     def get_connection_url(self) -> str:
-        """Get connection URL for this server."""
+        """Get connection URL"""
         ip = self.get_local_ip()
         return f"https://{ip}:{self.port}/api"
     
     def get_protocol_name(self) -> str:
-        """Get protocol name."""
+        """Get protocol name"""
         return "QUIC/HTTP3"
-    
-    @staticmethod
-    def is_available() -> bool:
-        """Check if QUIC/HTTP3 is available."""
-        return AIOQUIC_AVAILABLE
 
