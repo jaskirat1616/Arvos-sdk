@@ -39,6 +39,5 @@ No Python installation needed. Works on any device with a browser.
 
 ## Next Steps
 
-- [Web Viewer Overview](overview.md) - Full feature list
 - [Web Viewer Overview](overview.md) - Complete feature list
 
