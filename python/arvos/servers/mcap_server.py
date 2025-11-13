@@ -1,137 +1,200 @@
 """
-MCAP streaming server for ARVOS.
-
-Accepts length-prefixed JSON envelopes over TCP and writes them to an MCAP file.
-Each message envelope should contain:
-    {
-        "topic": "/sensor/imu",
-        "timestampNs": 123456789,
-        "payloadEncoding": "json",
-        "payload": {... original message ...}
-    }
+MCAP Stream server for receiving sensor data from ARVOS iOS app
 """
-
-from __future__ import annotations
 
 import asyncio
 import json
-import time
-from dataclasses import dataclass
+import websockets
 from pathlib import Path
-from typing import Dict, Optional
+from datetime import datetime
+from typing import Optional
 
-from mcap.writer import Writer
+try:
+    from mcap.writer import Writer
+    from mcap.mcap0 import Schema, Channel
+    MCAP_AVAILABLE = True
+except ImportError:
+    MCAP_AVAILABLE = False
+    Writer = None
+    Schema = None
+    Channel = None
 
-
-@dataclass
-class MCAPChannel:
-    name: str
-    channel_id: int
-    encoding: str = "json"
-
-
-class MCAPStreamConnection:
-    def __init__(self, writer: Writer, output_path: Path):
-        self._writer = writer
-        self._output_path = output_path
-        self._channels: Dict[str, MCAPChannel] = {}
-        self._writer.start(profile="arvos-stream", library="arvos-python-sdk")
-
-    def close(self):
-        try:
-            self._writer.finish()
-        except Exception:
-            pass
-
-    def _ensure_channel(self, topic: str, encoding: str) -> int:
-        channel = self._channels.get(topic)
-        if channel and channel.encoding == encoding:
-            return channel.channel_id
-
-        channel_id = self._writer.register_channel(
-            topic=topic, message_encoding=encoding, schema_id=0, metadata={}
-        )
-        self._channels[topic] = MCAPChannel(name=topic, channel_id=channel_id, encoding=encoding)
-        return channel_id
-
-    def write_envelope(self, envelope: Dict[str, object]):
-        topic = envelope.get("topic", "/misc")
-        encoding = str(envelope.get("payloadEncoding", "json"))
-        timestamp = int(envelope.get("timestampNs", time.time_ns()))
-
-        payload = envelope.get("payload")
-        if payload is None:
-            return
-
-        if encoding == "json":
-            data_bytes = json.dumps(payload).encode("utf-8")
-        elif encoding == "base64":
-            import base64
-
-            data_bytes = base64.b64decode(payload)
-        else:
-            return
-
-        channel_id = self._ensure_channel(str(topic), encoding)
-        self._writer.add_message(
-            channel_id=channel_id,
-            log_time=timestamp,
-            publish_time=timestamp,
-            data=data_bytes,
-        )
+from .base_server import BaseArvosServer
+from ..client import ArvosClient
 
 
-class MCAPStreamServer:
-    def __init__(self, host: str = "0.0.0.0", port: int = 17500, output_dir: Optional[Path] = None):
-        self.host = host
-        self.port = port
-        self.output_dir = Path(output_dir) if output_dir else Path("mcap_logs")
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self._server: Optional[asyncio.AbstractServer] = None
-
+class MCAPStreamServer(BaseArvosServer):
+    """MCAP Stream server - receives data and writes to MCAP file"""
+    
+    def __init__(self, host: str = "0.0.0.0", port: int = 17500, 
+                 output_file: Optional[str] = None):
+        super().__init__(host, port)
+        self.output_file = output_file or f"arvos_stream_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mcap"
+        self.writer: Optional[Writer] = None
+        self.mcap_file: Optional[Path] = None
+        self.schemas: dict = {}
+        self.channels: dict = {}
+        self._server_task: Optional[asyncio.Task] = None
+        self._server = None  # Store websockets server instance
+    
     async def start(self):
-        self._server = await asyncio.start_server(self._handle_client, self.host, self.port)
-        addr = ", ".join(str(sock.getsockname()) for sock in self._server.sockets or [])
-        print(f"📡 MCAP stream server listening on {addr}")
-
-        async with self._server:
-            await self._server.serve_forever()
-
+        """Start the MCAP stream server"""
+        if not MCAP_AVAILABLE:
+            print("⚠️  mcap library not found. Install it with: pip install mcap")
+            print("   Falling back to basic WebSocket server...")
+            await self._start_basic_server()
+            return
+        
+        # Create MCAP file
+        self.mcap_file = Path(self.output_file)
+        self.writer = Writer(open(self.mcap_file, "wb"))
+        self.writer.start()
+        
+        # Define schemas and channels
+        await self._setup_mcap_channels()
+        
+        # Start WebSocket server
+        import websockets
+        
+        self.running = True
+        self.print_connection_info()
+        print(f"💾 Writing to MCAP file: {self.mcap_file}")
+        print("✅ MCAP stream server started. Waiting for connections...")
+        print("Press Ctrl+C to stop.\n")
+        
+        # Use websockets.serve properly - it's an async context manager
+        async with websockets.serve(self._handle_client, self.host, self.port) as server:
+            self._server = server  # Store for cleanup
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                pass
+    
+    async def _start_basic_server(self):
+        """Fallback basic WebSocket server if MCAP not available"""
+        import websockets
+        
+        async def handle_client(websocket, path):
+            client_id = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+            await self._invoke_callback(self.on_connect, client_id)
+            self.connected_clients += 1
+            
+            try:
+                async for message in websocket:
+                    if isinstance(message, str):
+                        await self._parser._handle_json_message(message)
+                    else:
+                        await self._parser._handle_binary_message(message)
+            finally:
+                await self._invoke_callback(self.on_disconnect, client_id)
+                self.connected_clients -= 1
+        
+        self.running = True
+        self.print_connection_info()
+        print("✅ Basic WebSocket server started (MCAP not available)")
+        print("Press Ctrl+C to stop.\n")
+        
+        # Use websockets.serve properly - it's an async context manager
+        async with websockets.serve(handle_client, self.host, self.port) as server:
+            self._server = server  # Store for cleanup
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                pass
+    
+    async def _setup_mcap_channels(self):
+        """Setup MCAP schemas and channels"""
+        # IMU schema
+        imu_schema = Schema(
+            name="IMUData",
+            encoding="json",
+            data=json.dumps({
+                "type": "object",
+                "properties": {
+                    "angularVelocity": {"type": "array", "items": {"type": "number"}},
+                    "linearAcceleration": {"type": "array", "items": {"type": "number"}},
+                    "timestampNs": {"type": "integer"}
+                }
+            }).encode()
+        )
+        self.schemas["imu"] = self.writer.add_schema(imu_schema)
+        self.channels["imu"] = self.writer.add_channel(
+            Channel(topic="/arvos/imu", message_encoding="json", 
+                   metadata={}, schema_id=self.schemas["imu"])
+        )
+        
+        # Add other schemas (GPS, Pose, Camera, Depth) similarly
+        # ... (simplified for brevity)
+    
+    async def _handle_client(self, websocket, path):
+        """Handle WebSocket client connection"""
+        client_id = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+        await self._invoke_callback(self.on_connect, client_id)
+        self.connected_clients += 1
+        
+        try:
+            async for message in websocket:
+                try:
+                    if isinstance(message, str):
+                        # JSON message
+                        data = json.loads(message)
+                        self.messages_received += 1
+                        self.bytes_received += len(message.encode())
+                        
+                        # Write to MCAP if available
+                        if self.writer and "imu" in self.channels:
+                            msg_type = data.get("sensorType") or data.get("type", "").lower()
+                            if msg_type == "imu":
+                                self.writer.add_message(
+                                    channel_id=self.channels["imu"],
+                                    log_time=0,
+                                    data=message.encode(),
+                                    publish_time=0
+                                )
+                        
+                        # Dispatch via parser
+                        await self._parser._handle_json_message(message)
+                    else:
+                        # Binary data
+                        self.messages_received += 1
+                        self.bytes_received += len(message)
+                        await self._parser._handle_binary_message(message)
+                except json.JSONDecodeError:
+                    # If message was bytes but we tried to parse as JSON
+                    if isinstance(message, bytes):
+                        self.messages_received += 1
+                        self.bytes_received += len(message)
+                        await self._parser._handle_binary_message(message)
+        finally:
+            await self._invoke_callback(self.on_disconnect, client_id)
+            self.connected_clients -= 1
+    
     async def stop(self):
-        if self._server is not None:
+        """Stop the MCAP stream server"""
+        self.running = False
+        
+        # Close websockets server if it exists
+        if self._server:
             self._server.close()
             await self._server.wait_closed()
-            self._server = None
+        
+        if self.writer:
+            self.writer.finish()
+            if self.mcap_file and self.mcap_file.exists():
+                size_kb = self.mcap_file.stat().st_size / 1024
+                print(f"\n✅ MCAP file saved: {self.mcap_file}")
+                print(f"   File size: {size_kb:.1f} KB")
+                print(f"   Messages: {self.messages_received}")
+                print(f"💡 Open this file in Foxglove Studio to visualize!")
+        
+        print("MCAP stream server stopped")
+    
+    def get_connection_url(self) -> str:
+        """Get connection URL"""
+        ip = self.get_local_ip()
+        return f"ws://{ip}:{self.port}"
+    
+    def get_protocol_name(self) -> str:
+        """Get protocol name"""
+        return "MCAP Stream"
 
-    async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        peer = writer.get_extra_info("peername")
-        print(f"✅ MCAP client connected: {peer}")
-
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        output_path = self.output_dir / f"arvos-session-{timestamp}.mcap"
-
-        with open(output_path, "wb") as fh:
-            connection = MCAPStreamConnection(Writer(fh), output_path)
-            try:
-                while True:
-                    length_bytes = await reader.readexactly(4)
-                    length = int.from_bytes(length_bytes, byteorder="little")
-                    payload = await reader.readexactly(length)
-
-                    try:
-                        envelope = json.loads(payload)
-                    except json.JSONDecodeError:
-                        continue
-
-                    connection.write_envelope(envelope)
-            except asyncio.IncompleteReadError:
-                pass
-            finally:
-                connection.close()
-                writer.close()
-                await writer.wait_closed()
-                print(f"👋 MCAP client disconnected: {peer}")
-                print(f"💾 Session saved to {output_path}")
-
-
-__all__ = ["MCAPStreamServer"]
