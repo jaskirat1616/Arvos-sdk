@@ -1,28 +1,47 @@
 """
-Arvos SDK server implementations for different protocols
+ARVOS Protocol Servers
+
+All protocol server implementations for receiving sensor data from the iOS app.
 """
 
 from .base_server import BaseArvosServer
-from .http_server import HTTPArvosServer
-from .mcap_server import MCAPStreamServer
-from .mqtt_server import MQTTArvosServer
-from .grpc_server import GRPCArvosServer
 
+# HTTP/REST
+try:
+    from .http_server import HTTPArvosServer
+except ImportError:
+    HTTPArvosServer = None
+
+# gRPC
+try:
+    from .grpc_server import GRPCArvosServer
+except ImportError:
+    GRPCArvosServer = None
+
+# MQTT
+try:
+    from .mqtt_server import MQTTArvosServer
+except ImportError:
+    MQTTArvosServer = None
+
+# MCAP Stream
+try:
+    from .mcap_server import MCAPStreamServer
+except ImportError:
+    MCAPStreamServer = None
+
+# QUIC/HTTP3
 try:
     from .quic_server import QUICArvosServer
-    QUIC_AVAILABLE = True
 except ImportError:
-    QUIC_AVAILABLE = False
     QUICArvosServer = None
 
 __all__ = [
     "BaseArvosServer",
     "HTTPArvosServer",
-    "MCAPStreamServer",
-    "MQTTArvosServer",
     "GRPCArvosServer",
+    "MQTTArvosServer",
+    "MCAPStreamServer",
+    "QUICArvosServer",
 ]
-
-if QUIC_AVAILABLE:
-    __all__.append("QUICArvosServer")
 
