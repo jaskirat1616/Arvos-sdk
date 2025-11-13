@@ -141,7 +141,7 @@ ARVOS supports multiple streaming protocols to fit different use cases:
 
 ### Web Viewer
 - [Overview](web-viewer/overview.md) - Zero-install browser viewer
-- [Quick Start](web-viewer/quick-start.md) - Get started in 30 seconds
+- [Web Viewer Quick Start](web-viewer/quick-start.md) - Get started in 30 seconds
 
 ---
 

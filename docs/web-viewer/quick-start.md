@@ -40,5 +40,5 @@ No Python installation needed. Works on any device with a browser.
 ## Next Steps
 
 - [Web Viewer Overview](overview.md) - Full feature list
-- [Web Viewer README](../../web-viewer/README.md) - Complete documentation
+- [Web Viewer Overview](overview.md) - Complete feature list
 
