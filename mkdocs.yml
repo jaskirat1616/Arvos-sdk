@@ -3,6 +3,8 @@ site_description: Professional sensor streaming platform for iPhone and Apple Wa
 site_author: Jaskirat Singh
 site_url: https://arvos.dev
 
+copyright: Copyright &copy; 2025 Jaskirat Singh
+
 repo_name: jaskirat1616/arvos-sdk
 repo_url: https://github.com/jaskirat1616/arvos-sdk
 edit_uri: edit/main/docs/
@@ -11,14 +13,14 @@ theme:
   name: material
   palette:
     - scheme: default
-      primary: indigo
-      accent: indigo
+      primary: blue
+      accent: cyan
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: blue
+      accent: cyan
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -27,14 +29,19 @@ theme:
     - navigation.sections
     - navigation.expand
     - navigation.top
+    - navigation.indexes
     - search.suggest
     - search.highlight
     - content.tabs
     - content.code.copy
     - content.code.annotate
+    - content.tooltips
   icon:
     repo: fontawesome/brands/github
     logo: material/robot
+  font:
+    text: Inter
+    code: JetBrains Mono
 
 plugins:
   - search

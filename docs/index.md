@@ -6,6 +6,16 @@ Turn your iPhone (and optional Apple Watch) into a research-grade sensor platfor
 
 ---
 
+## 🎯 What is ARVOS?
+
+ARVOS transforms your iPhone into a professional sensor streaming platform, perfect for:
+- **Research** - SLAM, computer vision, sensor fusion
+- **Robotics** - Real-time perception, ROS 2 integration
+- **Education** - Learn AR, computer vision, sensor systems
+- **Development** - Prototype algorithms with real sensor data
+
+---
+
 ## 🚀 Quick Start
 
 Get started in 30 seconds with the Web Viewer (no installation required):
