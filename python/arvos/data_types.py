@@ -290,3 +290,66 @@ class HandshakeMessage:
     def timestamp_s(self) -> float:
         """Timestamp in seconds"""
         return self.timestamp_ns / 1e9
+
+
+@dataclass
+class WatchIMUData:
+    """Apple Watch IMU data (accelerometer + gyroscope + gravity)"""
+    timestamp_ns: int
+    angular_velocity: Tuple[float, float, float]  # rad/s (x, y, z)
+    linear_acceleration: Tuple[float, float, float]  # m/s² (x, y, z)
+    gravity: Tuple[float, float, float]  # m/s² (x, y, z)
+
+    @property
+    def timestamp_s(self) -> float:
+        """Timestamp in seconds"""
+        return self.timestamp_ns / 1e9
+
+    @property
+    def angular_velocity_array(self) -> np.ndarray:
+        """Angular velocity as numpy array"""
+        return np.array(self.angular_velocity)
+
+    @property
+    def linear_acceleration_array(self) -> np.ndarray:
+        """Linear acceleration as numpy array"""
+        return np.array(self.linear_acceleration)
+
+    @property
+    def gravity_array(self) -> np.ndarray:
+        """Gravity vector as numpy array"""
+        return np.array(self.gravity)
+
+
+@dataclass
+class WatchAttitudeData:
+    """Apple Watch attitude (orientation) data"""
+    timestamp_ns: int
+    quaternion: Tuple[float, float, float, float]  # x, y, z, w
+    pitch: float  # radians
+    roll: float  # radians
+    yaw: float  # radians
+    reference_frame: str
+
+    @property
+    def timestamp_s(self) -> float:
+        """Timestamp in seconds"""
+        return self.timestamp_ns / 1e9
+
+    @property
+    def quaternion_array(self) -> np.ndarray:
+        """Quaternion as numpy array"""
+        return np.array(self.quaternion)
+
+
+@dataclass
+class WatchMotionActivityData:
+    """Apple Watch motion activity classification"""
+    timestamp_ns: int
+    state: str  # walking, running, cycling, vehicle, stationary, unknown
+    confidence: float  # 0.0 - 1.0
+
+    @property
+    def timestamp_s(self) -> float:
+        """Timestamp in seconds"""
+        return self.timestamp_ns / 1e9

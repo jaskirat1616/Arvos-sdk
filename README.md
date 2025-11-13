@@ -325,6 +325,16 @@ python examples/rerun_visualizer.py --port 9090
 
 This launches the bundled `ArvosServer`, connects to a [Rerun](https://rerun.io/) viewer (spawning one locally by default), and logs every stream the SDK exposes—handshake metadata, IMU, GPS, pose, camera, depth, and Apple Watch sensors.
 
+**Important Notes:**
+
+- **Version Compatibility:** The script automatically checks that your Rerun SDK and CLI versions match. Version mismatches cause critical errors like "Bad chunk schema: Missing row_id column" and data corruption. If versions don't match, the script will exit with fix instructions. To override (not recommended), use `--ignore-version-mismatch`.
+
+- **Troubleshooting:**
+  - **Version Mismatch:** Ensure SDK and CLI versions match: `pip show rerun-sdk` and `rerun --version` should show the same version
+  - **Port Conflicts:** If port 9090 is in use, use `--port` to specify a different port
+  - **Viewer Not Opening:** The script auto-spawns the viewer by default. If it doesn't open, start manually with `rerun` in another terminal
+  - **Connection Errors:** Make sure both SDK and viewer are updated: `pip install --upgrade rerun-sdk`
+
 ### Save Camera Frames
 
 ```python

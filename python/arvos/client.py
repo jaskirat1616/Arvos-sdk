@@ -10,7 +10,8 @@ import base64
 from typing import Callable, Optional, Dict, Any
 from .data_types import (
     IMUData, GPSData, PoseData, CameraFrame, DepthFrame,
-    HandshakeMessage, DeviceCapabilities, CameraIntrinsics
+    HandshakeMessage, DeviceCapabilities, CameraIntrinsics,
+    WatchIMUData, WatchAttitudeData, WatchMotionActivityData
 )
 
 
@@ -43,6 +44,11 @@ class ArvosClient:
         self.on_status: Optional[Callable[[Dict[str, Any]], None]] = None
         self.on_error: Optional[Callable[[str, Optional[str]], None]] = None
         self.on_disconnect: Optional[Callable[[], None]] = None
+
+        # Apple Watch callbacks
+        self.on_watch_imu: Optional[Callable[[WatchIMUData], None]] = None
+        self.on_watch_attitude: Optional[Callable[[WatchAttitudeData], None]] = None
+        self.on_watch_activity: Optional[Callable[[WatchMotionActivityData], None]] = None
 
         # Binary message buffer for handling fragmented messages
         self.binary_buffer = b""
@@ -165,6 +171,61 @@ class ArvosClient:
                         await self.on_error(data.get("error"), data.get("details"))
                     else:
                         self.on_error(data.get("error"), data.get("details"))
+            elif msg_type == "watch_imu":
+                if self.on_watch_imu:
+                    watch_imu_data = WatchIMUData(
+                        timestamp_ns=data["timestampNs"],
+                        angular_velocity=tuple(data["angularVelocity"]),
+                        linear_acceleration=tuple(data["linearAcceleration"]),
+                        gravity=tuple(data["gravity"])
+                    )
+                    if asyncio.iscoroutinefunction(self.on_watch_imu):
+                        await self.on_watch_imu(watch_imu_data)
+                    else:
+                        self.on_watch_imu(watch_imu_data)
+            elif msg_type == "watch_attitude":
+                if self.on_watch_attitude:
+                    watch_attitude_data = WatchAttitudeData(
+                        timestamp_ns=data["timestampNs"],
+                        quaternion=tuple(data["quaternion"]),
+                        pitch=data["pitch"],
+                        roll=data["roll"],
+                        yaw=data["yaw"],
+                        reference_frame=data["referenceFrame"]
+                    )
+                    if asyncio.iscoroutinefunction(self.on_watch_attitude):
+                        await self.on_watch_attitude(watch_attitude_data)
+                    else:
+                        self.on_watch_attitude(watch_attitude_data)
+            elif msg_type == "watch_activity":
+                if self.on_watch_activity:
+                    # Convert boolean flags to state string
+                    state = "unknown"
+                    if data.get("isRunning"):
+                        state = "running"
+                    elif data.get("isWalking"):
+                        state = "walking"
+                    elif data.get("isCycling"):
+                        state = "cycling"
+                    elif data.get("isDriving"):
+                        state = "vehicle"
+                    elif data.get("isStationary"):
+                        state = "stationary"
+
+                    # Convert confidence from CoreMotion scale to 0-1
+                    confidence_raw = data.get("confidence", 0)
+                    # CoreMotion confidence: 0=low, 1=medium, 2=high
+                    confidence = confidence_raw / 2.0 if confidence_raw <= 2 else 1.0
+
+                    watch_activity_data = WatchMotionActivityData(
+                        timestamp_ns=data["timestampNs"],
+                        state=state,
+                        confidence=confidence
+                    )
+                    if asyncio.iscoroutinefunction(self.on_watch_activity):
+                        await self.on_watch_activity(watch_activity_data)
+                    else:
+                        self.on_watch_activity(watch_activity_data)
             else:
                 print(f"Unknown JSON message type: {msg_type}")
                 print(f"DEBUG JSON: Keys = {data.keys()}, Message = {message[:200]}")

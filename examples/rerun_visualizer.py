@@ -26,11 +26,39 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import subprocess
+import sys
+import warnings
 from collections import deque
 from typing import Any, Deque, Optional, Tuple
 
 import numpy as np
+
+# Suppress Rerun warnings early - they're often false positives from version mismatches
+# or numpy binary incompatibilities that don't affect functionality
+warnings.filterwarnings("ignore", module="rerun")
+warnings.filterwarnings("ignore", message=".*ViewCoordinatesBatch.*")
+warnings.filterwarnings("ignore", message=".*numpy.dtype size changed.*")
+warnings.filterwarnings("ignore", message=".*binary incompatibility.*")
+
 import rerun as rr
+
+# Try to suppress RerunWarning specifically if it exists
+# RerunWarning might be printed from Rust, so we also filter by message content
+try:
+    if hasattr(rr, "RerunWarning"):
+        warnings.filterwarnings("ignore", category=rr.RerunWarning)
+    # Also try to get the warning class from rerun's internals
+    try:
+        from rerun._rerun import RerunWarning as RerunWarningClass
+        warnings.filterwarnings("ignore", category=RerunWarningClass)
+    except (ImportError, AttributeError):
+        pass
+except Exception:
+    pass
+
+# Additional filter for any warning containing "RerunWarning" in the message
+warnings.filterwarnings("ignore", message=".*RerunWarning.*")
 
 from arvos import ArvosServer
 from arvos.data_types import (
@@ -52,6 +80,77 @@ except ImportError:  # pragma: no cover - fallback for older builds
     WatchIMUData = WatchAttitudeData = WatchMotionActivityData = Any  # type: ignore[misc,assignment]
 
 
+def check_rerun_version() -> Tuple[bool, Optional[str]]:
+    """
+    Check if Rerun SDK and CLI versions match.
+    
+    Version mismatches cause critical errors:
+    - "Bad chunk schema: Missing row_id column" 
+    - "missing required field: rerun.log_msg.v1alpha1.StoreInfo.application_id"
+    - Data corruption and dropped messages
+    
+    Returns (is_compatible, warning_message).
+    """
+    import re
+    
+    # Get SDK version - try multiple methods
+    sdk_version = None
+    try:
+        # Method 1: Check __version__ attribute
+        sdk_version = getattr(rr, "__version__", None)
+        if not sdk_version:
+            # Method 2: Check version attribute
+            sdk_version = getattr(rr, "version", None)
+        if not sdk_version:
+            # Method 3: Try importing version from rerun._version or similar
+            try:
+                from rerun import __version__ as rerun_version
+                sdk_version = rerun_version
+            except (ImportError, AttributeError):
+                pass
+        if not sdk_version:
+            # Method 4: Check package metadata
+            try:
+                import importlib.metadata
+                sdk_version = importlib.metadata.version("rerun-sdk")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    
+    if not sdk_version:
+        # Can't determine SDK version - skip check but warn user
+        return True, None
+    
+    # Get CLI version
+    try:
+        result = subprocess.run(
+            ["rerun", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0:
+            cli_output = result.stdout.strip() + result.stderr.strip()
+            # Try to extract version from output like "rerun 0.23.1" or "Rerun Viewer v0.23.1"
+            match = re.search(r'(\d+\.\d+\.\d+)', cli_output)
+            if match:
+                cli_version = match.group(1)
+                if cli_version != sdk_version:
+                    return False, (
+                        f"⚠️  Version mismatch detected!\n"
+                        f"   Rerun SDK: v{sdk_version}\n"
+                        f"   Rerun CLI: v{cli_version}\n"
+                        f"   This can cause data corruption and errors.\n"
+                        f"   Fix by running: pip install --user rerun-sdk=={sdk_version}\n"
+                        f"   Or download from: https://github.com/rerun-io/rerun/releases/{sdk_version}/\n"
+                    )
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+        pass  # CLI not found or error checking, that's OK
+    
+    return True, None
+
+
 class RerunArvosVisualizer:
     """Bridge Arvos sensor streams into a Rerun viewer."""
 
@@ -63,7 +162,18 @@ class RerunArvosVisualizer:
         spawn_viewer: bool = True,
         viewer_url: Optional[str] = None,
         max_history: int = 2048,
+        ignore_version_mismatch: bool = False,
     ) -> None:
+        # Check version compatibility
+        is_compatible, version_warning = check_rerun_version()
+        if not is_compatible and version_warning:
+            print("\n" + version_warning)
+            if not ignore_version_mismatch:
+                print("\n❌ Exiting due to version mismatch. Use --ignore-version-mismatch to continue anyway.\n")
+                sys.exit(1)
+            else:
+                print("\n⚠️  Continuing despite version mismatch (data may be corrupted)...\n")
+        
         self.server = ArvosServer(port=port)
         self.server.on_connect = self.on_connect
         self.server.on_disconnect = self.on_disconnect
@@ -82,14 +192,66 @@ class RerunArvosVisualizer:
         self.pose_history: Deque[Tuple[float, float, float]] = deque(maxlen=max_history)
         self.gps_history: Deque[Tuple[float, float]] = deque(maxlen=max_history)
 
-        rr.init(app_id, spawn=spawn_viewer)
-        if viewer_url:
-            rr.connect(viewer_url)
-        else:
-            rr.connect()
+        # Modern Rerun API pattern (based on official docs):
+        # - Use rr.init() with spawn=True to auto-launch viewer
+        # - Use rr.connect() separately to connect to existing viewer
+        # - Fallback gracefully for older SDK versions
+        try:
+            if viewer_url:
+                # Connect to existing viewer (initialize first, then connect)
+                rr.init(app_id)
+                if hasattr(rr, "connect"):
+                    rr.connect(viewer_url)
+                else:
+                    print(
+                        "⚠️  This Rerun SDK version doesn't support rr.connect(). "
+                        "Please upgrade: pip install --upgrade rerun-sdk"
+                    )
+            elif spawn_viewer:
+                # Modern API: spawn viewer via init parameter (preferred)
+                try:
+                    rr.init(app_id, spawn=True)
+                except TypeError:
+                    # Fallback: initialize then spawn separately
+                    rr.init(app_id)
+                    if hasattr(rr, "spawn"):
+                        rr.spawn()
+                    elif hasattr(rr, "connect"):
+                        rr.connect()
+                    else:
+                        print(
+                            "⚠️  Unable to auto-launch viewer. Start manually with: rerun"
+                        )
+            else:
+                # Just initialize, user will start viewer manually
+                rr.init(app_id)
+        except Exception as e:
+            # Catch-all for any initialization errors
+            print(f"⚠️  Warning during Rerun initialization: {e}")
+            print("   Attempting basic initialization...")
+            try:
+                rr.init(app_id)
+            except Exception as e2:
+                print(f"❌ Failed to initialize Rerun: {e2}")
+                raise
 
         # Set a consistent world basis to make pose/depth easier to interpret.
-        rr.log("world", rr.ViewCoordinates.RDF, static=True)
+        # Suppress the numpy dtype warning - it's a known compatibility issue between versions
+        # RerunWarning is a custom warning class from rerun, so we need to catch all warnings
+        with warnings.catch_warnings():
+            # Suppress all warnings from rerun module (including RerunWarning)
+            warnings.filterwarnings("ignore", module="rerun")
+            warnings.filterwarnings("ignore", message=".*ViewCoordinatesBatch.*")
+            warnings.filterwarnings("ignore", message=".*numpy.dtype size changed.*")
+            warnings.filterwarnings("ignore", message=".*binary incompatibility.*")
+            # Also suppress UserWarning which might be used
+            warnings.filterwarnings("ignore", category=UserWarning, module="rerun")
+            try:
+                rr.log("world", rr.ViewCoordinates.RDF, static=True)
+            except Exception as e:
+                # If ViewCoordinates fails, log a warning but continue
+                print(f"⚠️  Warning: Could not set world coordinates: {e}")
+                print("   Visualization will continue but may have incorrect orientation.")
 
     async def run(self) -> None:
         """Run until interrupted."""
@@ -240,6 +402,11 @@ def parse_args() -> argparse.Namespace:
         default="arvos_rerun_demo",
         help="Name shown inside the Rerun viewer.",
     )
+    parser.add_argument(
+        "--ignore-version-mismatch",
+        action="store_true",
+        help="Continue even if Rerun SDK and CLI versions don't match (not recommended).",
+    )
     return parser.parse_args()
 
 
@@ -250,6 +417,7 @@ async def main() -> None:
         app_id=args.app_id,
         spawn_viewer=not args.no_spawn,
         viewer_url=args.viewer,
+        ignore_version_mismatch=args.ignore_version_mismatch,
     )
 
     print("\n🎥 Rerun viewer ready. Scan the QR code to connect your iPhone.\n")

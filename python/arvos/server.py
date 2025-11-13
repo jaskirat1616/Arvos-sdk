@@ -30,6 +30,8 @@ class ArvosServer:
         self.host = host
         self.port = port
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
+        self.latest_handshake: Optional[str] = None
+        self.handshake_sender: Optional[websockets.WebSocketServerProtocol] = None
 
         # Callbacks - users can assign these
         self.on_connect: Optional[Callable[[str], None]] = None
@@ -45,6 +47,11 @@ class ArvosServer:
         self.on_depth = None
         self.on_status = None
         self.on_error = None
+
+        # Apple Watch handlers
+        self.on_watch_imu = None
+        self.on_watch_attitude = None
+        self.on_watch_activity = None
 
     def get_local_ip(self) -> str:
         """Get local IP address"""
@@ -101,13 +108,25 @@ class ArvosServer:
         if self.on_connect:
             await self.on_connect(client_id)
 
+        # Send cached handshake so late joiners know device capabilities
+        if self.latest_handshake and websocket is not self.handshake_sender:
+            try:
+                await websocket.send(self.latest_handshake)
+            except websockets.exceptions.ConnectionClosed:
+                pass
+
         try:
             async for message in websocket:
+                if isinstance(message, str):
+                    self._cache_handshake(message, websocket)
+
                 if self.on_message:
                     await self.on_message(client_id, message)
 
                 # Delegate to specific handlers
                 await self._delegate_message(message)
+
+                await self._broadcast(message, exclude=websocket)
 
         except websockets.exceptions.ConnectionClosed:
             pass
@@ -117,6 +136,10 @@ class ArvosServer:
 
             if self.on_disconnect:
                 await self.on_disconnect(client_id)
+
+            if websocket is self.handshake_sender:
+                self.handshake_sender = None
+                self.latest_handshake = None
 
     async def _delegate_message(self, message):
         """Delegate message to appropriate handler"""
@@ -135,6 +158,9 @@ class ArvosServer:
         temp_client.on_depth = self.on_depth
         temp_client.on_status = self.on_status
         temp_client.on_error = self.on_error
+        temp_client.on_watch_imu = self.on_watch_imu
+        temp_client.on_watch_attitude = self.on_watch_attitude
+        temp_client.on_watch_activity = self.on_watch_activity
 
         # Handle message using client's parsing logic
         await temp_client._handle_message(message)
@@ -157,3 +183,28 @@ class ArvosServer:
     def get_client_count(self) -> int:
         """Get number of connected clients"""
         return len(self.clients)
+
+    async def _broadcast(self, message, exclude: Optional[websockets.WebSocketServerProtocol] = None):
+        """Broadcast message to all clients except the sender"""
+        if not self.clients:
+            return
+
+        targets = [client for client in self.clients if client is not exclude]
+        if not targets:
+            return
+
+        await asyncio.gather(
+            *[client.send(message) for client in targets],
+            return_exceptions=True
+        )
+
+    def _cache_handshake(self, message: str, websocket: websockets.WebSocketServerProtocol):
+        try:
+            data = json.loads(message)
+        except json.JSONDecodeError:
+            return
+
+        msg_type = data.get("type") or data.get("sensorType")
+        if msg_type == "handshake":
+            self.latest_handshake = message
+            self.handshake_sender = websocket

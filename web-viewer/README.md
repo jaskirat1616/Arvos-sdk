@@ -19,21 +19,20 @@
 
 ### On Your Computer:
 
-**Option 1: Python HTTP Server (Recommended)**
+**Zero-setup launcher (starts HTTP + WebSocket)**
 ```bash
 cd arvos-sdk/web-viewer
+./start-viewer.sh              # HTTP 8000, WebSocket 8765
+# ./start-viewer.sh 8080 9090  # Optional: override HTTP/WS ports
+```
+
+The script serves the static viewer and spins up the ARVOS WebSocket bridge so
+your iPhone can connect immediately—no extra terminals required.
+
+**Prefer manual control?** You can still run any static server:
+```bash
 python3 -m http.server 8000
-```
-
-**Option 2: PHP Server**
-```bash
-cd arvos-sdk/web-viewer
 php -S localhost:8000
-```
-
-**Option 3: Node.js (if installed)**
-```bash
-cd arvos-sdk/web-viewer
 npx http-server -p 8000
 ```
 
@@ -42,7 +41,7 @@ npx http-server -p 8000
 1. **Open ARVOS app**
 2. **Start streaming** (select any mode)
 3. **Open browser** on your computer: `http://localhost:8000`
-4. **Scan QR code** with iPhone
+4. **Scan QR code** with iPhone (the WebSocket server is already running)
 5. **Done!** Live data appears in ~30 seconds
 
 ---
@@ -98,7 +97,7 @@ On your iPhone:
 2. Go to **Stream** tab
 3. Select a mode (e.g., "RGBD Camera" or "Full Sensor")
 4. Tap **CONNECT TO SERVER** button
-5. Scan the QR code from the web page
+5. Scan the QR code from the web page (matches the running WebSocket port)
 
 #### 4. Verify Connection
 
@@ -167,7 +166,8 @@ On your iPhone:
 **Check:**
 - ✅ Both devices on same WiFi network
 - ✅ Web server is running (`localhost:8000` loads)
-- ✅ Firewall not blocking port 8765
+- ✅ WebSocket helper is running (script prints `Starting ARVOS WebSocket server`)
+- ✅ Firewall not blocking the WebSocket port (default 8765)
 - ✅ ARVOS app shows "CONNECTED" before clicking START
 - ✅ iPhone and computer can ping each other
 
