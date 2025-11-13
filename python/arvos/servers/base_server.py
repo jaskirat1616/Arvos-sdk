@@ -1,168 +1,125 @@
 """
-Base server class for all protocol implementations
+Base server class for all ARVOS protocol servers
 """
 
-from abc import ABC, abstractmethod
-from typing import Optional, Callable, Dict, Any
-import socket
 import asyncio
+import socket
+from abc import ABC, abstractmethod
+from typing import Optional, Callable, Any
+from ..client import ArvosClient
+from ..data_types import (
+    IMUData, GPSData, PoseData, CameraFrame, DepthFrame,
+    HandshakeMessage, WatchIMUData, WatchAttitudeData, WatchMotionActivityData
+)
 
 
 class BaseArvosServer(ABC):
     """
-    Abstract base class for all Arvos protocol servers.
+    Abstract base class for all ARVOS protocol servers.
     
-    All protocol implementations (WebSocket, gRPC, MQTT, etc.) should inherit
-    from this class and implement the abstract methods.
+    All protocol servers should inherit from this class and implement:
+    - start() - Start the server
+    - stop() - Stop the server
+    - get_connection_url() - Return connection URL for clients
+    - get_protocol_name() - Return protocol name
     """
     
     def __init__(self, host: str = "0.0.0.0", port: int = 9090):
-        """
-        Initialize base server.
-        
-        Args:
-            host: Host address to bind to (default: 0.0.0.0 for all interfaces)
-            port: Port number to listen on (default: 9090)
-        """
         self.host = host
         self.port = port
         self.running = False
+        self.connected_clients = 0
         
         # Statistics
-        self.bytes_received: int = 0
-        self.messages_received: int = 0
-        self.connected_clients: int = 0
+        self.messages_received = 0
+        self.bytes_received = 0
         
-        # Common callbacks - users can assign these
-        self.on_connect: Optional[Callable[[str], Any]] = None
-        self.on_disconnect: Optional[Callable[[str], Any]] = None
-        self.on_message: Optional[Callable[[str, Any], Any]] = None
-        
-        # Sensor data callbacks
-        self.on_handshake: Optional[Callable] = None
-        self.on_imu: Optional[Callable] = None
-        self.on_gps: Optional[Callable] = None
-        self.on_pose: Optional[Callable] = None
-        self.on_camera: Optional[Callable] = None
-        self.on_depth: Optional[Callable] = None
-        self.on_status: Optional[Callable] = None
-        self.on_error: Optional[Callable] = None
+        # Callbacks - users can assign these
+        self.on_connect: Optional[Callable[[str], None]] = None
+        self.on_disconnect: Optional[Callable[[str], None]] = None
+        self.on_handshake: Optional[Callable[[HandshakeMessage], None]] = None
+        self.on_imu: Optional[Callable[[IMUData], None]] = None
+        self.on_gps: Optional[Callable[[GPSData], None]] = None
+        self.on_pose: Optional[Callable[[PoseData], None]] = None
+        self.on_camera: Optional[Callable[[CameraFrame], None]] = None
+        self.on_depth: Optional[Callable[[DepthFrame], None]] = None
+        self.on_status: Optional[Callable[[dict], None]] = None
+        self.on_error: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None
         
         # Apple Watch callbacks
-        self.on_watch_imu: Optional[Callable] = None
-        self.on_watch_attitude: Optional[Callable] = None
-        self.on_watch_activity: Optional[Callable] = None
-    
-    @abstractmethod
-    async def start(self):
-        """
-        Start the server and begin listening for connections.
+        self.on_watch_imu: Optional[Callable[[WatchIMUData], None]] = None
+        self.on_watch_attitude: Optional[Callable[[WatchAttitudeData], None]] = None
+        self.on_watch_activity: Optional[Callable[[WatchMotionActivityData], None]] = None
         
-        This method should be implemented by each protocol adapter.
-        It should run indefinitely until stop() is called.
-        """
-        pass
+        # Use ArvosClient for message parsing
+        self._parser = ArvosClient()
+        self._configure_parser_callbacks()
     
-    @abstractmethod
-    async def stop(self):
-        """
-        Stop the server and close all connections.
+    def _configure_parser_callbacks(self):
+        """Configure ArvosClient parser to dispatch to our callbacks"""
+        # Direct assignment - ArvosClient handles sync/async internally
+        self._parser.on_handshake = self.on_handshake
+        self._parser.on_imu = self.on_imu
+        self._parser.on_gps = self.on_gps
+        self._parser.on_pose = self.on_pose
+        self._parser.on_camera = self.on_camera
+        self._parser.on_depth = self.on_depth
+        self._parser.on_status = self.on_status
+        self._parser.on_error = self.on_error
+        self._parser.on_watch_imu = self.on_watch_imu
+        self._parser.on_watch_attitude = self.on_watch_attitude
+        self._parser.on_watch_activity = self.on_watch_activity
+    
+    async def _invoke_callback(self, callback: Optional[Callable], *args, **kwargs):
+        """Invoke a callback, handling both sync and async"""
+        if callback is None:
+            return
         
-        This method should be implemented by each protocol adapter.
-        """
-        pass
-    
-    @abstractmethod
-    def get_connection_url(self) -> str:
-        """
-        Get the connection URL/address for this server.
-        
-        Returns:
-            Connection string (e.g., "ws://192.168.1.100:9090", "grpc://localhost:50051")
-        """
-        pass
-    
-    @abstractmethod
-    def get_protocol_name(self) -> str:
-        """
-        Get the protocol name for display/logging.
-        
-        Returns:
-            Protocol name (e.g., "WebSocket", "gRPC", "MQTT")
-        """
-        pass
-    
-    # Helper methods
+        if asyncio.iscoroutinefunction(callback):
+            await callback(*args, **kwargs)
+        else:
+            callback(*args, **kwargs)
     
     def get_local_ip(self) -> str:
-        """
-        Get the local IP address of this machine.
-        
-        Returns:
-            Local IP address as string
-        """
+        """Get local IP address"""
         try:
-            # Create a socket to determine local IP
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             ip = s.getsockname()[0]
             s.close()
             return ip
-        except Exception:
+        except:
             return "127.0.0.1"
     
-    def get_statistics(self) -> Dict[str, Any]:
-        """
-        Get server statistics.
-        
-        Returns:
-            Dictionary containing statistics
-        """
-        return {
-            "protocol": self.get_protocol_name(),
-            "running": self.running,
-            "bytes_received": self.bytes_received,
-            "messages_received": self.messages_received,
-            "connected_clients": self.connected_clients,
-            "host": self.host,
-            "port": self.port,
-        }
-    
-    def reset_statistics(self):
-        """Reset all statistics counters."""
-        self.bytes_received = 0
-        self.messages_received = 0
-    
-    async def _invoke_callback(self, callback: Optional[Callable], *args, **kwargs):
-        """
-        Safely invoke a callback, handling both sync and async functions.
-        
-        Args:
-            callback: The callback function to invoke
-            *args: Positional arguments to pass to callback
-            **kwargs: Keyword arguments to pass to callback
-        """
-        if callback is None:
-            return
-        
-        try:
-            if asyncio.iscoroutinefunction(callback):
-                await callback(*args, **kwargs)
-            else:
-                callback(*args, **kwargs)
-        except Exception as e:
-            print(f"Error in callback {callback.__name__}: {e}")
-    
     def print_connection_info(self):
-        """Print connection information to console."""
-        print("\n" + "=" * 50)
+        """Print connection information for users"""
+        ip = self.get_local_ip()
+        url = self.get_connection_url()
+        print("\n" + "=" * 60)
         print(f"ARVOS {self.get_protocol_name()} Server")
-        print("=" * 50)
-        print(f"Connection URL: {self.get_connection_url()}")
-        print(f"Host: {self.host}")
-        print(f"Port: {self.port}")
-        print("=" * 50 + "\n")
+        print("=" * 60)
+        print(f"📡 Server: {self.host}:{self.port}")
+        print(f"🌐 Local IP: {ip}")
+        print(f"📱 Connection URL: {url}")
+        print("=" * 60 + "\n")
     
-    def __repr__(self) -> str:
-        return f"<{self.__class__.__name__} protocol={self.get_protocol_name()} host={self.host} port={self.port}>"
+    @abstractmethod
+    async def start(self):
+        """Start the server"""
+        pass
+    
+    @abstractmethod
+    async def stop(self):
+        """Stop the server"""
+        pass
+    
+    @abstractmethod
+    def get_connection_url(self) -> str:
+        """Get connection URL for clients"""
+        pass
+    
+    @abstractmethod
+    def get_protocol_name(self) -> str:
+        """Get protocol name"""
+        pass
 
