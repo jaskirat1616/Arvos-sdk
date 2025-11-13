@@ -1,5 +1,5 @@
 site_name: ARVOS Documentation
-site_description: Professional sensor streaming platform for iPhone and Apple Watch
+site_description: Sensor streaming platform for iPhone and Apple Watch
 site_author: Jaskirat Singh
 site_url: https://arvos.dev
 
@@ -13,14 +13,14 @@ theme:
   name: material
   palette:
     - scheme: default
-      primary: blue
-      accent: cyan
+      primary: teal
+      accent: green
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: blue
-      accent: cyan
+      primary: teal
+      accent: green
       toggle:
         icon: material/brightness-4
         name: Switch to light mode

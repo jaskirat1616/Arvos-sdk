@@ -1,14 +1,14 @@
 # ARVOS Documentation
 
-**Professional sensor streaming platform for iPhone and Apple Watch**
+**Sensor streaming platform for iPhone and Apple Watch**
 
-Turn your iPhone (and optional Apple Watch) into a research-grade sensor platform with LiDAR, cameras, IMU, ARKit pose tracking, and wearable motion sensing.
+Turn your iPhone (and optional Apple Watch) into a sensor platform with LiDAR, cameras, IMU, ARKit pose tracking, and wearable motion sensing.
 
 ---
 
 ## 🎯 What is ARVOS?
 
-ARVOS transforms your iPhone into a professional sensor streaming platform, perfect for:
+ARVOS turns your iPhone into a sensor streaming platform, great for:
 - **Research** - SLAM, computer vision, sensor fusion
 - **Robotics** - Real-time perception, ROS 2 integration
 - **Education** - Learn AR, computer vision, sensor systems
@@ -37,7 +37,7 @@ python examples/01_quickstart.py
 
 ## 📱 What ARVOS Streams
 
-ARVOS captures and streams high-quality sensor data from your iPhone and Apple Watch:
+ARVOS captures and streams sensor data from your iPhone and Apple Watch:
 
 ### iPhone Sensors
 
@@ -53,7 +53,7 @@ ARVOS captures and streams high-quality sensor data from your iPhone and Apple W
 - **🧭 Attitude**: Quaternion + pitch/roll/yaw angles
 - **🚶 Motion Activity**: Classification (walking, running, cycling, vehicle, stationary)
 
-**All sensors are nanosecond-synchronized** for research-grade data collection.
+**All sensors are nanosecond-synchronized** for precise data collection.
 
 ---
 

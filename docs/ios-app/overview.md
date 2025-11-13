@@ -1,6 +1,6 @@
 # iOS App Overview
 
-The ARVOS iOS app turns your iPhone (and optional Apple Watch) into a professional sensor streaming platform.
+The ARVOS iOS app turns your iPhone (and optional Apple Watch) into a sensor streaming platform.
 
 !!! note "App Availability"
     The ARVOS iOS app is available on the App Store for download and use. However, the iOS app source code is **not open source** and is not publicly available on GitHub. This documentation covers app usage and features.

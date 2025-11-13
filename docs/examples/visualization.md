@@ -83,7 +83,7 @@ asyncio.run(main())
 
 ## Rerun Visualization
 
-Professional visualization with Rerun.
+Visualization with Rerun.
 
 ```bash
 pip install rerun-sdk pillow
