@@ -34,15 +34,25 @@ def test_imports():
         print(f"❌ MQTTArvosServer - FAILED: {e}")
         results.append(("MQTT", False))
     
-    # Test MCAP
+    # Test MCAP WebSocket
     try:
         from arvos.servers import MCAPStreamServer
         server = MCAPStreamServer(port=17500)
-        print("✅ MCAPStreamServer - OK")
-        results.append(("MCAP", True))
+        print("✅ MCAPStreamServer (WebSocket) - OK")
+        results.append(("MCAP WebSocket", True))
     except Exception as e:
         print(f"❌ MCAPStreamServer - FAILED: {e}")
-        results.append(("MCAP", False))
+        results.append(("MCAP WebSocket", False))
+
+    # Test MCAP HTTP
+    try:
+        from arvos.servers import MCAPHTTPServer
+        server = MCAPHTTPServer(port=17501)
+        print("✅ MCAPHTTPServer (HTTP POST) - OK")
+        results.append(("MCAP HTTP", True))
+    except Exception as e:
+        print(f"❌ MCAPHTTPServer - FAILED: {e}")
+        results.append(("MCAP HTTP", False))
     
     # Test gRPC
     try:

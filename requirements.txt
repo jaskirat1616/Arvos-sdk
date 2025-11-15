@@ -13,3 +13,6 @@ opencv-python>=4.5.0
 # For ROS 2 bridge (requires ROS 2 installation)
 # rclpy
 # cv_bridge
+
+# For MCAP Stream protocol
+mcap>=1.0.0

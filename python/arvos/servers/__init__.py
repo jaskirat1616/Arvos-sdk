@@ -24,11 +24,17 @@ try:
 except ImportError:
     MQTTArvosServer = None
 
-# MCAP Stream
+# MCAP Stream (WebSocket-based)
 try:
     from .mcap_server import MCAPStreamServer
 except ImportError:
     MCAPStreamServer = None
+
+# MCAP HTTP (HTTP POST-based)
+try:
+    from .mcap_http_server import MCAPHTTPServer
+except ImportError:
+    MCAPHTTPServer = None
 
 # QUIC/HTTP3
 try:
@@ -42,6 +48,7 @@ __all__ = [
     "GRPCArvosServer",
     "MQTTArvosServer",
     "MCAPStreamServer",
+    "MCAPHTTPServer",
     "QUICArvosServer",
 ]
 

@@ -4,20 +4,59 @@ MCAP Stream server for receiving sensor data from ARVOS iOS app
 
 import asyncio
 import json
+import logging
+import sys
+import time
 import websockets
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+# Configure websockets loggers to suppress expected handshake errors
+# These errors occur when non-WebSocket HTTP requests (like POST) hit the server
+for logger_name in ["websockets.server", "websockets.protocol", "websockets.http11"]:
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(logging.CRITICAL)  # Only show critical errors
+    # Add a filter to suppress InvalidMessage and ValueError for non-WebSocket requests
+    class HandshakeErrorFilter(logging.Filter):
+        def filter(self, record):
+            msg = str(record.getMessage())
+            # Suppress expected errors from non-WebSocket HTTP requests
+            if any(phrase in msg for phrase in [
+                "unsupported HTTP method",
+                "did not receive a valid HTTP request",
+                "opening handshake failed"
+            ]):
+                return False
+            return True
+    logger.addFilter(HandshakeErrorFilter())
+
+# Store original excepthook to filter websocket handshake errors
+_original_excepthook = sys.excepthook
+
+def _filter_websocket_exceptions(exc_type, exc_value, exc_traceback):
+    """Filter out expected websocket handshake errors from tracebacks"""
+    if exc_type in (websockets.exceptions.InvalidMessage, ValueError):
+        error_msg = str(exc_value)
+        if any(phrase in error_msg for phrase in [
+            "unsupported HTTP method",
+            "did not receive a valid HTTP request",
+            "opening handshake failed"
+        ]):
+            # Suppress these expected errors - they occur when non-WebSocket HTTP requests hit the server
+            return
+    # For all other exceptions, use the original handler
+    _original_excepthook(exc_type, exc_value, exc_traceback)
+
+# Install the filtered excepthook
+sys.excepthook = _filter_websocket_exceptions
+
 try:
     from mcap.writer import Writer
-    from mcap.mcap0 import Schema, Channel
     MCAP_AVAILABLE = True
 except ImportError:
     MCAP_AVAILABLE = False
     Writer = None
-    Schema = None
-    Channel = None
 
 from .base_server import BaseArvosServer
 from ..client import ArvosClient
@@ -62,8 +101,70 @@ class MCAPStreamServer(BaseArvosServer):
         print("✅ MCAP stream server started. Waiting for connections...")
         print("Press Ctrl+C to stop.\n")
         
+        # Handler for non-WebSocket HTTP requests
+        async def process_request(connection, request):
+            """Handle non-WebSocket HTTP requests gracefully"""
+            # Check if this is a WebSocket upgrade request
+            if request.method != "GET" or request.headers.get("Upgrade", "").lower() != "websocket":
+                return websockets.http.Response(
+                    status=400,
+                    headers={"Content-Type": "text/plain"},
+                    body=b"This endpoint only accepts WebSocket connections.\n"
+                )
+            return None  # Let websockets handle WebSocket upgrade requests
+        
+        # Create a custom logger that suppresses handshake errors
+        class SuppressingLogger:
+            """Logger that suppresses expected handshake errors"""
+            def __init__(self):
+                self._logger = logging.getLogger("websockets.suppressed")
+                self._logger.setLevel(logging.CRITICAL)
+            
+            def error(self, msg, *args, **kwargs):
+                msg_str = str(msg) % args if args else str(msg)
+                if not any(phrase in msg_str for phrase in [
+                    "unsupported HTTP method",
+                    "did not receive a valid HTTP request", 
+                    "opening handshake failed"
+                ]):
+                    self._logger.error(msg, *args, **kwargs)
+            
+            def warning(self, msg, *args, **kwargs):
+                msg_str = str(msg) % args if args else str(msg)
+                if not any(phrase in msg_str for phrase in [
+                    "unsupported HTTP method",
+                    "did not receive a valid HTTP request",
+                    "opening handshake failed"
+                ]):
+                    self._logger.warning(msg, *args, **kwargs)
+            
+            def info(self, msg, *args, **kwargs):
+                pass  # Suppress info messages
+            
+            def debug(self, msg, *args, **kwargs):
+                pass  # Suppress debug messages
+        
+        # Wrapper to catch and suppress handshake errors for non-WebSocket requests
+        async def handle_client_wrapper(websocket, path):
+            """Wrapper to handle connection errors gracefully"""
+            try:
+                await self._handle_client(websocket, path)
+            except (websockets.exceptions.InvalidMessage, ValueError) as e:
+                # Suppress errors from non-WebSocket HTTP requests (POST, etc.)
+                if "unsupported HTTP method" in str(e) or "did not receive a valid HTTP request" in str(e):
+                    # Silently ignore - these are expected for non-WebSocket requests
+                    pass
+                else:
+                    raise
+        
         # Use websockets.serve properly - it's an async context manager
-        async with websockets.serve(self._handle_client, self.host, self.port) as server:
+        async with websockets.serve(
+            handle_client_wrapper, 
+            self.host, 
+            self.port,
+            process_request=process_request,
+            logger=SuppressingLogger()
+        ) as server:
             self._server = server  # Store for cleanup
             try:
                 await asyncio.Future()
@@ -94,8 +195,70 @@ class MCAPStreamServer(BaseArvosServer):
         print("✅ Basic WebSocket server started (MCAP not available)")
         print("Press Ctrl+C to stop.\n")
         
+        # Handler for non-WebSocket HTTP requests
+        async def process_request(connection, request):
+            """Handle non-WebSocket HTTP requests gracefully"""
+            # Check if this is a WebSocket upgrade request
+            if request.method != "GET" or request.headers.get("Upgrade", "").lower() != "websocket":
+                return websockets.http.Response(
+                    status=400,
+                    headers={"Content-Type": "text/plain"},
+                    body=b"This endpoint only accepts WebSocket connections.\n"
+                )
+            return None  # Let websockets handle WebSocket upgrade requests
+        
+        # Create a custom logger that suppresses handshake errors
+        class SuppressingLogger:
+            """Logger that suppresses expected handshake errors"""
+            def __init__(self):
+                self._logger = logging.getLogger("websockets.suppressed")
+                self._logger.setLevel(logging.CRITICAL)
+            
+            def error(self, msg, *args, **kwargs):
+                msg_str = str(msg) % args if args else str(msg)
+                if not any(phrase in msg_str for phrase in [
+                    "unsupported HTTP method",
+                    "did not receive a valid HTTP request", 
+                    "opening handshake failed"
+                ]):
+                    self._logger.error(msg, *args, **kwargs)
+            
+            def warning(self, msg, *args, **kwargs):
+                msg_str = str(msg) % args if args else str(msg)
+                if not any(phrase in msg_str for phrase in [
+                    "unsupported HTTP method",
+                    "did not receive a valid HTTP request",
+                    "opening handshake failed"
+                ]):
+                    self._logger.warning(msg, *args, **kwargs)
+            
+            def info(self, msg, *args, **kwargs):
+                pass  # Suppress info messages
+            
+            def debug(self, msg, *args, **kwargs):
+                pass  # Suppress debug messages
+        
+        # Wrapper to catch and suppress handshake errors for non-WebSocket requests
+        async def handle_client_wrapper(websocket, path):
+            """Wrapper to handle connection errors gracefully"""
+            try:
+                await handle_client(websocket, path)
+            except (websockets.exceptions.InvalidMessage, ValueError) as e:
+                # Suppress errors from non-WebSocket HTTP requests (POST, etc.)
+                if "unsupported HTTP method" in str(e) or "did not receive a valid HTTP request" in str(e):
+                    # Silently ignore - these are expected for non-WebSocket requests
+                    pass
+                else:
+                    raise
+        
         # Use websockets.serve properly - it's an async context manager
-        async with websockets.serve(handle_client, self.host, self.port) as server:
+        async with websockets.serve(
+            handle_client_wrapper, 
+            self.host, 
+            self.port,
+            process_request=process_request,
+            logger=SuppressingLogger()
+        ) as server:
             self._server = server  # Store for cleanup
             try:
                 await asyncio.Future()
@@ -105,26 +268,71 @@ class MCAPStreamServer(BaseArvosServer):
     async def _setup_mcap_channels(self):
         """Setup MCAP schemas and channels"""
         # IMU schema
-        imu_schema = Schema(
+        imu_schema_data = json.dumps({
+            "type": "object",
+            "properties": {
+                "angularVelocity": {"type": "array", "items": {"type": "number"}},
+                "linearAcceleration": {"type": "array", "items": {"type": "number"}},
+                "timestampNs": {"type": "integer"}
+            }
+        }).encode()
+        self.schemas["imu"] = self.writer.register_schema(
             name="IMUData",
             encoding="json",
-            data=json.dumps({
-                "type": "object",
-                "properties": {
-                    "angularVelocity": {"type": "array", "items": {"type": "number"}},
-                    "linearAcceleration": {"type": "array", "items": {"type": "number"}},
-                    "timestampNs": {"type": "integer"}
-                }
-            }).encode()
+            data=imu_schema_data
         )
-        self.schemas["imu"] = self.writer.add_schema(imu_schema)
-        self.channels["imu"] = self.writer.add_channel(
-            Channel(topic="/arvos/imu", message_encoding="json", 
-                   metadata={}, schema_id=self.schemas["imu"])
+        self.channels["imu"] = self.writer.register_channel(
+            topic="/arvos/imu",
+            message_encoding="json",
+            schema_id=self.schemas["imu"],
+            metadata={}
         )
         
-        # Add other schemas (GPS, Pose, Camera, Depth) similarly
-        # ... (simplified for brevity)
+        # GPS schema
+        gps_schema_data = json.dumps({
+            "type": "object",
+            "properties": {
+                "latitude": {"type": "number"},
+                "longitude": {"type": "number"},
+                "altitude": {"type": "number"},
+                "horizontalAccuracy": {"type": "number"},
+                "verticalAccuracy": {"type": "number"},
+                "timestampNs": {"type": "integer"}
+            }
+        }).encode()
+        self.schemas["gps"] = self.writer.register_schema(
+            name="GPSData",
+            encoding="json",
+            data=gps_schema_data
+        )
+        self.channels["gps"] = self.writer.register_channel(
+            topic="/arvos/gps",
+            message_encoding="json",
+            schema_id=self.schemas["gps"],
+            metadata={}
+        )
+        
+        # Pose schema
+        pose_schema_data = json.dumps({
+            "type": "object",
+            "properties": {
+                "position": {"type": "array", "items": {"type": "number"}},
+                "rotation": {"type": "array", "items": {"type": "number"}},
+                "trackingState": {"type": "string"},
+                "timestampNs": {"type": "integer"}
+            }
+        }).encode()
+        self.schemas["pose"] = self.writer.register_schema(
+            name="PoseData",
+            encoding="json",
+            data=pose_schema_data
+        )
+        self.channels["pose"] = self.writer.register_channel(
+            topic="/arvos/pose",
+            message_encoding="json",
+            schema_id=self.schemas["pose"],
+            metadata={}
+        )
     
     async def _handle_client(self, websocket, path):
         """Handle WebSocket client connection"""
@@ -142,14 +350,30 @@ class MCAPStreamServer(BaseArvosServer):
                         self.bytes_received += len(message.encode())
                         
                         # Write to MCAP if available
-                        if self.writer and "imu" in self.channels:
+                        if self.writer:
                             msg_type = data.get("sensorType") or data.get("type", "").lower()
-                            if msg_type == "imu":
+                            timestamp_ns = data.get("timestampNs", int(time.time_ns()))
+                            
+                            if msg_type == "imu" and "imu" in self.channels:
                                 self.writer.add_message(
                                     channel_id=self.channels["imu"],
-                                    log_time=0,
+                                    log_time=timestamp_ns,
                                     data=message.encode(),
-                                    publish_time=0
+                                    publish_time=timestamp_ns
+                                )
+                            elif msg_type == "gps" and "gps" in self.channels:
+                                self.writer.add_message(
+                                    channel_id=self.channels["gps"],
+                                    log_time=timestamp_ns,
+                                    data=message.encode(),
+                                    publish_time=timestamp_ns
+                                )
+                            elif msg_type == "pose" and "pose" in self.channels:
+                                self.writer.add_message(
+                                    channel_id=self.channels["pose"],
+                                    log_time=timestamp_ns,
+                                    data=message.encode(),
+                                    publish_time=timestamp_ns
                                 )
                         
                         # Dispatch via parser
