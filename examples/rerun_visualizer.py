@@ -368,19 +368,76 @@ class RerunArvosVisualizer:
 
     async def on_pose(self, data: PoseData) -> None:
         translation = np.array(data.position, dtype=np.float32)
+        orientation = np.array(data.orientation, dtype=np.float32)
         self.pose_history.append(tuple(translation))
+
+        # Log camera transform
         rr.log(
             "pose/camera",
             rr.Transform3D(
                 translation=translation,
-                rotation=rr.Quaternion(xyzw=np.array(data.orientation, dtype=np.float32)),
+                rotation=rr.Quaternion(xyzw=orientation),
             ),
         )
+
+        # Visualize camera frustum to show field of view
+        # Typical iPhone camera has ~60-70° horizontal FOV
+        # We'll create a pyramid shape representing the camera view
+        fov_horizontal = np.radians(65)  # 65 degrees horizontal FOV
+        fov_vertical = np.radians(50)    # ~50 degrees vertical FOV
+        frustum_depth = 0.3  # 30cm frustum depth for visualization
+
+        # Calculate frustum corner offsets in camera space
+        half_width = frustum_depth * np.tan(fov_horizontal / 2)
+        half_height = frustum_depth * np.tan(fov_vertical / 2)
+
+        # Define frustum corners (in camera coordinate frame: +Z forward, +X right, +Y up)
+        frustum_corners_local = np.array([
+            [0, 0, 0],  # Camera origin
+            [-half_width, -half_height, frustum_depth],  # Bottom-left
+            [half_width, -half_height, frustum_depth],   # Bottom-right
+            [half_width, half_height, frustum_depth],    # Top-right
+            [-half_width, half_height, frustum_depth],   # Top-left
+        ], dtype=np.float32)
+
+        # Define edges of the frustum pyramid
+        frustum_edges = [
+            [0, 1], [0, 2], [0, 3], [0, 4],  # Edges from origin to corners
+            [1, 2], [2, 3], [3, 4], [4, 1],  # Rectangle at far plane
+        ]
+
+        # Log frustum as line segments
+        rr.log(
+            "pose/camera/frustum",
+            rr.LineStrips3D(
+                [frustum_corners_local[edge] for edge in frustum_edges],
+                colors=[[100, 200, 255]] * len(frustum_edges),  # Light blue
+            ),
+        )
+
+        # Log trajectory with enhanced styling
         if len(self.pose_history) > 1:
+            trajectory_points = np.array(self.pose_history, dtype=np.float32)
             rr.log(
                 "pose/trajectory",
-                rr.LineStrips3D([np.array(self.pose_history, dtype=np.float32)]),
+                rr.LineStrips3D(
+                    [trajectory_points],
+                    colors=[[255, 255, 0]],  # Yellow trajectory line
+                    radii=0.005,  # 5mm thick line
+                ),
             )
+
+            # Add markers at keyframe positions (every 10th pose)
+            if len(self.pose_history) % 10 == 0:
+                keyframe_positions = trajectory_points[::10]
+                rr.log(
+                    "pose/keyframes",
+                    rr.Points3D(
+                        positions=keyframe_positions,
+                        colors=[[255, 150, 0]],  # Orange keyframe markers
+                        radii=0.02,  # 2cm markers
+                    ),
+                )
 
     async def on_camera(self, frame: CameraFrame) -> None:
         image_array = frame.to_numpy()
@@ -463,6 +520,7 @@ class RerunArvosVisualizer:
         )
 
     async def on_watch_imu(self, data: WatchIMUData) -> None:  # type: ignore[override]
+        # Log scalar values for time-series analysis
         rr.log_scalar("watch/imu/angular_velocity/x", data.angular_velocity[0])
         rr.log_scalar("watch/imu/angular_velocity/y", data.angular_velocity[1])
         rr.log_scalar("watch/imu/angular_velocity/z", data.angular_velocity[2])
@@ -470,10 +528,76 @@ class RerunArvosVisualizer:
         rr.log_scalar("watch/imu/linear_acceleration/y", data.linear_acceleration[1])
         rr.log_scalar("watch/imu/linear_acceleration/z", data.linear_acceleration[2])
 
+        # Visualize acceleration vector in 3D
+        # Show the direction and magnitude of linear acceleration
+        accel = np.array(data.linear_acceleration, dtype=np.float32)
+        accel_magnitude = np.linalg.norm(accel)
+
+        if accel_magnitude > 0.1:  # Only show if acceleration is significant
+            # Normalize and scale for visualization (scale to ~0.5m length at 1G)
+            accel_viz = (accel / accel_magnitude) * min(accel_magnitude / 9.81, 2.0) * 0.5
+
+            rr.log(
+                "watch/imu/acceleration_3d",
+                rr.Arrows3D(
+                    vectors=[accel_viz],
+                    origins=[[0, 0, 0]],
+                    colors=[[255, 100, 0]],  # Orange for watch
+                    labels=[f"Accel: {accel_magnitude:.2f} m/s²"],
+                ),
+            )
+
     async def on_watch_attitude(self, data: WatchAttitudeData) -> None:  # type: ignore[override]
+        # Log scalar values
         rr.log_scalar("watch/attitude/pitch", data.pitch)
         rr.log_scalar("watch/attitude/roll", data.roll)
         rr.log_scalar("watch/attitude/yaw", data.yaw)
+
+        # 3D orientation visualization for Apple Watch
+        # Convert Euler angles to quaternion
+        roll, pitch, yaw = data.roll, data.pitch, data.yaw
+
+        cy = np.cos(yaw * 0.5)
+        sy = np.sin(yaw * 0.5)
+        cp = np.cos(pitch * 0.5)
+        sp = np.sin(pitch * 0.5)
+        cr = np.cos(roll * 0.5)
+        sr = np.sin(roll * 0.5)
+
+        qw = cr * cp * cy + sr * sp * sy
+        qx = sr * cp * cy - cr * sp * sy
+        qy = cr * sp * cy + sr * cp * sy
+        qz = cr * cp * sy - sr * sp * cy
+
+        # Log watch orientation in 3D space (offset from phone for clarity)
+        # Place watch visualization 1 meter to the right of origin
+        watch_offset = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+
+        rr.log(
+            "watch/orientation_3d",
+            rr.Transform3D(
+                translation=watch_offset,
+                rotation=rr.Quaternion(xyzw=[qx, qy, qz, qw])
+            ),
+        )
+
+        # Visualize watch axes
+        arrow_length = 0.3  # Smaller than phone to distinguish
+        watch_axes = np.array([
+            [arrow_length, 0, 0],  # X-axis
+            [0, arrow_length, 0],  # Y-axis
+            [0, 0, arrow_length],  # Z-axis
+        ], dtype=np.float32)
+
+        rr.log(
+            "watch/orientation_3d/axes",
+            rr.Arrows3D(
+                vectors=watch_axes,
+                origins=np.zeros((3, 3), dtype=np.float32),
+                colors=[[255, 100, 100], [100, 255, 100], [100, 100, 255]],  # Lighter colors
+                labels=["Watch X", "Watch Y", "Watch Z"],
+            ),
+        )
 
     async def on_watch_activity(self, data: WatchMotionActivityData) -> None:  # type: ignore[override]
         rr.log("watch/activity/state", rr.TextLog(f"{data.state} ({data.confidence:.2f})"))
