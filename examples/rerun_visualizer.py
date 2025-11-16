@@ -291,16 +291,65 @@ class RerunArvosVisualizer:
         rr.log("status/errors", rr.TextLog(message))
 
     async def on_imu(self, data: IMUData) -> None:
+        # Log scalar values for time-series plots
         rr.log_scalar("sensors/imu/angular_velocity/x", data.angular_velocity[0])
         rr.log_scalar("sensors/imu/angular_velocity/y", data.angular_velocity[1])
         rr.log_scalar("sensors/imu/angular_velocity/z", data.angular_velocity[2])
         rr.log_scalar("sensors/imu/linear_acceleration/x", data.linear_acceleration[0])
         rr.log_scalar("sensors/imu/linear_acceleration/y", data.linear_acceleration[1])
         rr.log_scalar("sensors/imu/linear_acceleration/z", data.linear_acceleration[2])
+
+        # 3D orientation visualization
         if data.attitude:
-            rr.log_scalar("sensors/imu/attitude/roll", data.attitude[0])
-            rr.log_scalar("sensors/imu/attitude/pitch", data.attitude[1])
-            rr.log_scalar("sensors/imu/attitude/yaw", data.attitude[2])
+            roll, pitch, yaw = data.attitude
+            rr.log_scalar("sensors/imu/attitude/roll", roll)
+            rr.log_scalar("sensors/imu/attitude/pitch", pitch)
+            rr.log_scalar("sensors/imu/attitude/yaw", yaw)
+
+            # Convert Euler angles (roll, pitch, yaw) to quaternion for 3D visualization
+            # Using aerospace sequence (ZYX): yaw -> pitch -> roll
+            cy = np.cos(yaw * 0.5)
+            sy = np.sin(yaw * 0.5)
+            cp = np.cos(pitch * 0.5)
+            sp = np.sin(pitch * 0.5)
+            cr = np.cos(roll * 0.5)
+            sr = np.sin(roll * 0.5)
+
+            qw = cr * cp * cy + sr * sp * sy
+            qx = sr * cp * cy - cr * sp * sy
+            qy = cr * sp * cy + sr * cp * sy
+            qz = cr * cp * sy - sr * sp * cy
+
+            # Log 3D orientation (device coordinate frame)
+            rr.log(
+                "sensors/imu/orientation_3d",
+                rr.Transform3D(
+                    rotation=rr.Quaternion(xyzw=[qx, qy, qz, qw])
+                ),
+            )
+
+            # Visualize orientation with arrows showing device axes
+            # Arrow length represents approximate scale
+            arrow_length = 0.5
+            # X-axis (red) - device right
+            # Y-axis (green) - device up
+            # Z-axis (blue) - device forward
+            device_axes = np.array([
+                [arrow_length, 0, 0],  # X-axis
+                [0, arrow_length, 0],  # Y-axis
+                [0, 0, arrow_length],  # Z-axis
+            ], dtype=np.float32)
+
+            rr.log(
+                "sensors/imu/orientation_3d/axes",
+                rr.Arrows3D(
+                    vectors=device_axes,
+                    origins=np.zeros((3, 3), dtype=np.float32),
+                    colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],  # RGB for XYZ
+                    labels=["X (Right)", "Y (Up)", "Z (Forward)"],
+                ),
+            )
+
         if data.magnetic_field:
             rr.log_scalar("sensors/imu/magnetic/x", data.magnetic_field[0])
             rr.log_scalar("sensors/imu/magnetic/y", data.magnetic_field[1])
@@ -357,11 +406,61 @@ class RerunArvosVisualizer:
             return
 
         positions = points[:, :3].astype(np.float32, copy=False)
+
+        # Enhanced color visualization
         colors = None
         if points.shape[1] >= 6:
+            # Use RGB colors from the point cloud
             colors = (points[:, 3:6].astype(np.float32, copy=False) / 255.0).clip(0.0, 1.0)
+        else:
+            # Fallback: depth-based color gradient (blue=close, red=far)
+            # Calculate distances from origin
+            distances = np.linalg.norm(positions, axis=1)
+            min_dist = np.min(distances)
+            max_dist = np.max(distances)
 
-        rr.log("depth/point_cloud", rr.Points3D(positions=positions, colors=colors))
+            # Normalize to 0-1 range
+            if max_dist > min_dist:
+                normalized = (distances - min_dist) / (max_dist - min_dist)
+            else:
+                normalized = np.zeros_like(distances)
+
+            # Create blue-to-red gradient
+            colors = np.zeros((len(positions), 3), dtype=np.float32)
+            colors[:, 0] = normalized  # Red increases with distance
+            colors[:, 2] = 1.0 - normalized  # Blue decreases with distance
+
+        # Confidence-based filtering if available
+        # Some LiDAR systems provide confidence values in additional columns
+        if points.shape[1] >= 7:
+            # Assume 7th column is confidence (0-1 or 0-255)
+            confidence = points[:, 6].astype(np.float32, copy=False)
+            if confidence.max() > 1.0:
+                confidence = confidence / 255.0
+
+            # Filter low-confidence points (threshold: 0.3)
+            confidence_threshold = 0.3
+            high_confidence_mask = confidence >= confidence_threshold
+
+            if high_confidence_mask.any():
+                positions = positions[high_confidence_mask]
+                colors = colors[high_confidence_mask] if colors is not None else None
+
+                # Optionally: modulate color intensity by confidence
+                if colors is not None:
+                    confidence_filtered = confidence[high_confidence_mask]
+                    colors = colors * confidence_filtered[:, np.newaxis]
+
+        # Log point cloud with enhanced visualization
+        # Set point radius for better visibility (0.01 = 1cm)
+        rr.log(
+            "depth/point_cloud",
+            rr.Points3D(
+                positions=positions,
+                colors=colors,
+                radii=0.01,  # 1cm point size for clear visualization
+            ),
+        )
 
     async def on_watch_imu(self, data: WatchIMUData) -> None:  # type: ignore[override]
         rr.log_scalar("watch/imu/angular_velocity/x", data.angular_velocity[0])
