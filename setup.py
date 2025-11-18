@@ -43,11 +43,4 @@ setup(
         "ros2": ["rclpy", "cv_bridge"],
         "dev": ["pytest>=7.0.0", "black>=22.0.0", "flake8>=4.0.0"],
     },
-    entry_points={
-        "console_scripts": [
-            "arvos-export=arvos.cli.export:main",
-            "arvos-verify=arvos.cli.verify:main",
-            "arvos-info=arvos.cli.info:main",
-        ],
-    },
 )
