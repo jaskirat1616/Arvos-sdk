@@ -15,6 +15,7 @@ class IMUData:
     linear_acceleration: Tuple[float, float, float]  # m/s² (x, y, z)
     magnetic_field: Optional[Tuple[float, float, float]] = None  # μT (x, y, z)
     attitude: Optional[Tuple[float, float, float]] = None  # roll, pitch, yaw (rad)
+    gravity: Optional[Tuple[float, float, float]] = None  # m/s² (x, y, z) - gravity vector
 
     @property
     def timestamp_s(self) -> float:
@@ -30,6 +31,11 @@ class IMUData:
     def linear_acceleration_array(self) -> np.ndarray:
         """Linear acceleration as numpy array"""
         return np.array(self.linear_acceleration)
+
+    @property
+    def gravity_array(self) -> Optional[np.ndarray]:
+        """Gravity vector as numpy array"""
+        return np.array(self.gravity) if self.gravity else None
 
 
 @dataclass

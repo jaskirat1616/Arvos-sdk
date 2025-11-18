@@ -14,7 +14,7 @@ async def main():
     # Simple callback to print data
     @server.on_imu
     def handle_imu(data):
-        print(f"IMU: {data.linearAcceleration}")
+        print(f"IMU: {data.linear_acceleration}")
 
     @server.on_pose
     def handle_pose(data):

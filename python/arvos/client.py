@@ -125,7 +125,8 @@ class ArvosClient:
                         angular_velocity=tuple(data["angularVelocity"]),
                         linear_acceleration=tuple(data["linearAcceleration"]),
                         magnetic_field=tuple(data.get("magneticField")) if data.get("magneticField") else None,
-                        attitude=tuple([data["attitude"]["roll"], data["attitude"]["pitch"], data["attitude"]["yaw"]]) if "attitude" in data else None
+                        attitude=tuple([data["attitude"]["roll"], data["attitude"]["pitch"], data["attitude"]["yaw"]]) if "attitude" in data else None,
+                        gravity=tuple(data["gravity"]) if data.get("gravity") else None
                     )
                     if asyncio.iscoroutinefunction(self.on_imu):
                         await self.on_imu(imu_data)
